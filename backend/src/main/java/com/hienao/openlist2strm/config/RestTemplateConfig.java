@@ -1,5 +1,6 @@
 package com.hienao.openlist2strm.config;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -7,6 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.converter.StringHttpMessageConverter;
 import org.springframework.web.client.RestTemplate;
 
 /**
@@ -37,6 +39,11 @@ public class RestTemplateConfig {
     factory.setOutputStreaming(false);
 
     RestTemplate restTemplate = new RestTemplate(factory);
+
+    // 添加 UTF-8 编码的 StringHttpMessageConverter，解决中文乱码问题
+    StringHttpMessageConverter stringConverter = new StringHttpMessageConverter(StandardCharsets.UTF_8);
+    stringConverter.setWriteAcceptCharset(false); // 避免在请求头中添加 Accept-Charset
+    restTemplate.getMessageConverters().add(0, stringConverter);
 
     // 添加拦截器
     restTemplate.setInterceptors(getInterceptors());
