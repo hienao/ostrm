@@ -38,13 +38,13 @@ public class StrmFileService {
   /**
    * 生成STRM文件
    *
-   * @param strmBasePath STRM文件基础路径
-   * @param relativePath 相对路径（相对于任务配置的path）
-   * @param fileName 文件名
-   * @param fileUrl 文件URL
+   * @param strmBasePath    STRM文件基础路径
+   * @param relativePath    相对路径（相对于任务配置的path）
+   * @param fileName        文件名
+   * @param fileUrl         文件URL
    * @param forceRegenerate 是否强制重新生成已存在的文件
-   * @param renameRegex 重命名正则表达式（可选）
-   * @param openlistConfig OpenList配置（用于baseUrl替换）
+   * @param renameRegex     重命名正则表达式（可选）
+   * @param openlistConfig  OpenList配置（用于baseUrl替换）
    */
   public void generateStrmFile(
       String strmBasePath,
@@ -61,20 +61,39 @@ public class StrmFileService {
       // 构建STRM文件路径
       Path strmFilePath = buildStrmFilePath(strmBasePath, relativePath, finalFileName);
 
-      // 检查文件是否已存在（增量任务场景）
-      if (Files.exists(strmFilePath) && !forceRegenerate) {
-        log.info("STRM文件已存在，跳过生成: {}", strmFilePath);
-        return;
+      // 处理baseUrl替换
+      String processedUrl = processUrlWithBaseUrlReplacement(fileUrl, openlistConfig);
+
+      // 计算最终写入的URL（考虑编码配置）
+      String finalUrl = processedUrl;
+      if (shouldEncodeUrl(openlistConfig)) {
+        finalUrl = encodeUrlForStrm(processedUrl);
+      }
+
+      // 检查文件是否已存在
+      if (Files.exists(strmFilePath)) {
+        if (!forceRegenerate) {
+          log.info("STRM文件已存在，跳过生成: {}", strmFilePath);
+          return;
+        }
+        // forceRegenerate=true时（增量模式），比较内容是否相同
+        try {
+          String existingContent = Files.readString(strmFilePath, StandardCharsets.UTF_8).trim();
+          if (existingContent.equals(finalUrl)) {
+            log.debug("STRM链接未变化，跳过更新: {}", strmFilePath);
+            return;
+          }
+          log.info("STRM链接已变化，更新文件: {}", strmFilePath);
+        } catch (IOException e) {
+          log.warn("读取现有STRM文件失败，将重新生成: {}, 错误: {}", strmFilePath, e.getMessage());
+        }
       }
 
       // 确保目录存在
       createDirectoriesIfNotExists(strmFilePath.getParent());
 
-      // 处理baseUrl替换
-      String processedUrl = processUrlWithBaseUrlReplacement(fileUrl, openlistConfig);
-
-      // 写入STRM文件内容
-      writeStrmFile(strmFilePath, processedUrl, openlistConfig);
+      // 写入STRM文件内容（直接写入已处理的finalUrl，避免重复编码）
+      writeStrmFileDirectly(strmFilePath, finalUrl);
 
       log.info("生成STRM文件成功: {}", strmFilePath);
 
@@ -88,7 +107,7 @@ public class StrmFileService {
    * 处理文件名（重命名和添加.strm扩展名）
    *
    * @param originalFileName 原始文件名
-   * @param renameRegex 重命名正则表达式
+   * @param renameRegex      重命名正则表达式
    * @return 处理后的文件名
    */
   private String processFileName(String originalFileName, String renameRegex) {
@@ -126,7 +145,7 @@ public class StrmFileService {
    *
    * @param strmBasePath STRM基础路径
    * @param relativePath 相对路径
-   * @param fileName 文件名
+   * @param fileName     文件名
    * @return STRM文件路径
    */
   public Path buildStrmFilePath(String strmBasePath, String relativePath, String fileName) {
@@ -138,16 +157,14 @@ public class StrmFileService {
         String cleanRelativePath = relativePath.replaceAll("^/+", "").replaceAll("/+$", "");
         if (StringUtils.hasText(cleanRelativePath)) {
           // 确保路径使用UTF-8编码
-          cleanRelativePath =
-              new String(
-                  cleanRelativePath.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+          cleanRelativePath = new String(
+              cleanRelativePath.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
           basePath = basePath.resolve(cleanRelativePath);
         }
       }
 
       // 确保文件名使用UTF-8编码
-      String safeFileName =
-          new String(fileName.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+      String safeFileName = new String(fileName.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
       return basePath.resolve(safeFileName);
 
     } catch (Exception e) {
@@ -174,24 +191,14 @@ public class StrmFileService {
   }
 
   /**
-   * 写入STRM文件内容
+   * 直接写入STRM文件内容（不做额外编码处理）
+   * 用于已经完成URL编码处理的场景
    *
    * @param strmFilePath STRM文件路径
-   * @param fileUrl 文件URL
-   * @param openlistConfig OpenList配置（用于URL编码配置）
+   * @param finalUrl     已处理完成的最终URL
    */
-  private void writeStrmFile(Path strmFilePath, String fileUrl, OpenlistConfig openlistConfig) {
+  private void writeStrmFileDirectly(Path strmFilePath, String finalUrl) {
     try {
-      // 根据配置决定是否进行URL编码
-      String finalUrl = fileUrl;
-      if (shouldEncodeUrl(openlistConfig)) {
-        finalUrl = encodeUrlForStrm(fileUrl);
-        log.info("URL编码处理: 原始={}, 编码后={}", fileUrl, finalUrl);
-      } else {
-        log.info("URL编码已禁用，使用原始URL: {}", fileUrl);
-      }
-
-      // STRM文件内容就是文件的URL
       Files.writeString(
           strmFilePath,
           finalUrl,
@@ -225,7 +232,9 @@ public class StrmFileService {
   /**
    * 对STRM文件的URL进行智能编码处理
    *
-   * <p>使用自定义的UrlEncoder工具类进行智能编码，只编码路径部分，保留协议、域名、查询参数结构， 确保URL中的中文和特殊字符正确编码，同时保持URL结构的完整性
+   * <p>
+   * 使用自定义的UrlEncoder工具类进行智能编码，只编码路径部分，保留协议、域名、查询参数结构，
+   * 确保URL中的中文和特殊字符正确编码，同时保持URL结构的完整性
    *
    * @param originalUrl 原始URL
    * @return 编码后的URL
@@ -324,7 +333,7 @@ public class StrmFileService {
    */
   private boolean isVideoFileWithDefaultExtensions(String fileName) {
     String lowerCaseFileName = fileName.toLowerCase(Locale.ROOT);
-    String[] defaultVideoExtensions = {".mp4", ".avi", ".mkv", ".rmvb"};
+    String[] defaultVideoExtensions = { ".mp4", ".avi", ".mkv", ".rmvb" };
 
     for (String extension : defaultVideoExtensions) {
       if (lowerCaseFileName.endsWith(extension)) {
@@ -386,16 +395,20 @@ public class StrmFileService {
   }
 
   /**
-   * 清理孤立的STRM文件（源文件已不存在的STRM文件） 用于增量执行时清理已删除源文件对应的STRM文件 同时删除对应的刮削文件（NFO文件、海报、背景图等）
+   * 清理孤立的STRM文件（源文件已不存在的STRM文件） 用于增量执行时清理已删除源文件对应的STRM文件
+   * 同时删除对应的刮削文件（NFO文件、海报、背景图等）
    *
-   * <p>使用深度优先遍历算法，对STRM目录进行智能清理： 1. 对当前任务的STRM目录做深度优先遍历 2. 对每个文件夹X，获取OpenList中对应路径的文件树Y 3.
-   * 如果Y不存在，直接删除X 4. 检查X中的所有STRM文件对应的源文件在OpenList中是否存在 5. 删除不存在的STRM文件及其关联的NFO/图片文件 6.
+   * <p>
+   * 使用深度优先遍历算法，对STRM目录进行智能清理： 1. 对当前任务的STRM目录做深度优先遍历 2.
+   * 对每个文件夹X，获取OpenList中对应路径的文件树Y 3.
+   * 如果Y不存在，直接删除X 4. 检查X中的所有STRM文件对应的源文件在OpenList中是否存在 5.
+   * 删除不存在的STRM文件及其关联的NFO/图片文件 6.
    * 如果目录X内无STRM文件后，删除X并继续向上检查父目录
    *
-   * @param strmBasePath STRM基础路径
-   * @param existingFiles 当前存在的源文件列表（保留参数但不再使用）
-   * @param taskPath 任务路径
-   * @param renameRegex 重命名正则表达式
+   * @param strmBasePath   STRM基础路径
+   * @param existingFiles  当前存在的源文件列表（保留参数但不再使用）
+   * @param taskPath       任务路径
+   * @param renameRegex    重命名正则表达式
    * @param openlistConfig OpenList配置（必需参数，用于实时验证文件存在性）
    * @return 清理的文件数量
    */
@@ -429,9 +442,8 @@ public class StrmFileService {
       String openlistRootPath = taskPath;
 
       // 使用深度优先遍历清理STRM目录
-      int cleanedCount =
-          validateAndCleanDirectory(
-              strmPath, openlistConfig, taskPath, openlistRootPath, renameRegex);
+      int cleanedCount = validateAndCleanDirectory(
+          strmPath, openlistConfig, taskPath, openlistRootPath, renameRegex);
 
       log.info("深度优先遍历清理完成，共清理 {} 个孤立文件/目录", cleanedCount);
       return cleanedCount;
@@ -498,15 +510,14 @@ public class StrmFileService {
 
       // 检查是否需要删除电视剧公共文件（当目录中没有其他视频文件时）
       try {
-        boolean hasOtherVideoFiles =
-            Files.list(parentDir)
-                .anyMatch(
-                    path -> {
-                      String fileName = path.getFileName().toString().toLowerCase();
-                      return !fileName.equals(strmFileName.toLowerCase())
-                          && (fileName.endsWith(".strm")
-                              || isVideoFileWithDefaultExtensions(fileName));
-                    });
+        boolean hasOtherVideoFiles = Files.list(parentDir)
+            .anyMatch(
+                path -> {
+                  String fileName = path.getFileName().toString().toLowerCase();
+                  return !fileName.equals(strmFileName.toLowerCase())
+                      && (fileName.endsWith(".strm")
+                          || isVideoFileWithDefaultExtensions(fileName));
+                });
 
         if (!hasOtherVideoFiles) {
           // 删除电视剧公共文件
@@ -645,7 +656,7 @@ public class StrmFileService {
   /**
    * 获取OpenList指定路径的文件树
    *
-   * @param config OpenList配置
+   * @param config       OpenList配置
    * @param openlistPath OpenList中的路径
    * @return 文件树列表，如果路径不存在或访问失败返回空列表
    */
@@ -673,9 +684,8 @@ public class StrmFileService {
       }
 
       // 检查目录中是否还有STRM文件或子目录
-      boolean hasStrmFiles =
-          Files.list(directoryPath)
-              .anyMatch(path -> path.toString().toLowerCase().endsWith(".strm"));
+      boolean hasStrmFiles = Files.list(directoryPath)
+          .anyMatch(path -> path.toString().toLowerCase().endsWith(".strm"));
 
       boolean hasSubDirectories = Files.list(directoryPath).anyMatch(Files::isDirectory);
 
@@ -701,12 +711,12 @@ public class StrmFileService {
   /**
    * 清理STRM文件并检查目录是否需要删除
    *
-   * @param directoryPath 要清理的目录路径
-   * @param openlistConfig OpenList配置
-   * @param taskPath 任务路径
+   * @param directoryPath        要清理的目录路径
+   * @param openlistConfig       OpenList配置
+   * @param taskPath             任务路径
    * @param openlistRelativePath OpenList中的相对路径
-   * @param renameRegex 重命名正则表达式
-   * @param rootTaskPath 任务根路径（用于根目录保护）
+   * @param renameRegex          重命名正则表达式
+   * @param rootTaskPath         任务根路径（用于根目录保护）
    * @return 清理的文件数量
    */
   private int cleanStrmFilesAndCheckDirectory(
@@ -727,8 +737,7 @@ public class StrmFileService {
       log.debug("清理STRM文件并检查目录: {} (OpenList路径: {})", directoryPath, openlistRelativePath);
 
       // 获取OpenList中对应路径的文件树
-      List<OpenlistApiService.OpenlistFile> openlistFiles =
-          getOpenListFileTree(openlistConfig, openlistRelativePath);
+      List<OpenlistApiService.OpenlistFile> openlistFiles = getOpenListFileTree(openlistConfig, openlistRelativePath);
 
       // 如果OpenList中不存在该路径，考虑删除整个目录
       if (openlistFiles.isEmpty()) {
@@ -753,8 +762,7 @@ public class StrmFileService {
                 String baseFileName = strmFileName.substring(0, strmFileName.lastIndexOf(".strm"));
 
                 // 检查OpenList中是否存在对应的源文件
-                boolean existsInOpenList =
-                    checkFileExistsInOpenList(baseFileName, openlistFiles, renameRegex);
+                boolean existsInOpenList = checkFileExistsInOpenList(baseFileName, openlistFiles, renameRegex);
 
                 if (!existsInOpenList) {
                   try {
@@ -784,8 +792,7 @@ public class StrmFileService {
       } else if (shouldDelete) {
         try {
           // 再次确认目录内容
-          List<Path> remainingFiles =
-              Files.list(directoryPath).collect(java.util.stream.Collectors.toList());
+          List<Path> remainingFiles = Files.list(directoryPath).collect(java.util.stream.Collectors.toList());
 
           if (remainingFiles.isEmpty()) {
             // 删除空目录
@@ -811,9 +818,9 @@ public class StrmFileService {
   /**
    * 检查文件在OpenList中是否存在（考虑重命名规则和扩展名匹配）
    *
-   * @param strmBaseName STRM文件的基础名（不含.strm后缀）
+   * @param strmBaseName  STRM文件的基础名（不含.strm后缀）
    * @param openlistFiles OpenList文件列表
-   * @param renameRegex 重命名正则表达式
+   * @param renameRegex   重命名正则表达式
    * @return 文件是否存在
    */
   private boolean checkFileExistsInOpenList(
@@ -919,11 +926,11 @@ public class StrmFileService {
   /**
    * 验证并清理单个目录（深度优先遍历的核心方法）
    *
-   * @param strmDirectoryPath STRM目录路径
-   * @param openlistConfig OpenList配置
-   * @param taskPath 任务路径
+   * @param strmDirectoryPath    STRM目录路径
+   * @param openlistConfig       OpenList配置
+   * @param taskPath             任务路径
    * @param openlistRelativePath OpenList中的相对路径
-   * @param renameRegex 重命名正则表达式
+   * @param renameRegex          重命名正则表达式
    * @return 清理的文件数量
    */
   private int validateAndCleanDirectory(
@@ -943,33 +950,29 @@ public class StrmFileService {
       log.debug("验证并清理目录: {} -> OpenList路径: {}", strmDirectoryPath, openlistRelativePath);
 
       // 获取当前STRM目录下的所有子目录
-      List<Path> subDirectories =
-          Files.list(strmDirectoryPath)
-              .filter(Files::isDirectory)
-              .sorted()
-              .collect(java.util.stream.Collectors.toList());
+      List<Path> subDirectories = Files.list(strmDirectoryPath)
+          .filter(Files::isDirectory)
+          .sorted()
+          .collect(java.util.stream.Collectors.toList());
 
       // 深度优先：先处理所有子目录
       for (Path subDir : subDirectories) {
         String subDirName = subDir.getFileName().toString();
-        String openlistSubPath =
-            openlistRelativePath.isEmpty() ? subDirName : openlistRelativePath + "/" + subDirName;
+        String openlistSubPath = openlistRelativePath.isEmpty() ? subDirName : openlistRelativePath + "/" + subDirName;
 
-        int cleanedCount =
-            validateAndCleanDirectory(
-                subDir, openlistConfig, taskPath, openlistSubPath, renameRegex);
+        int cleanedCount = validateAndCleanDirectory(
+            subDir, openlistConfig, taskPath, openlistSubPath, renameRegex);
         totalCleanedCount.addAndGet(cleanedCount);
       }
 
       // 处理当前目录的STRM文件
-      int currentDirCleanedCount =
-          cleanStrmFilesAndCheckDirectory(
-              strmDirectoryPath,
-              openlistConfig,
-              taskPath,
-              openlistRelativePath,
-              renameRegex,
-              taskPath);
+      int currentDirCleanedCount = cleanStrmFilesAndCheckDirectory(
+          strmDirectoryPath,
+          openlistConfig,
+          taskPath,
+          openlistRelativePath,
+          renameRegex,
+          taskPath);
       totalCleanedCount.addAndGet(currentDirCleanedCount);
 
     } catch (Exception e) {
@@ -982,7 +985,7 @@ public class StrmFileService {
   /**
    * 处理URL的baseUrl替换
    *
-   * @param originalUrl 原始URL
+   * @param originalUrl    原始URL
    * @param openlistConfig OpenList配置
    * @return 处理后的URL
    */
