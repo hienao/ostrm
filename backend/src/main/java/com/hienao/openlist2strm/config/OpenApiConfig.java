@@ -1,6 +1,6 @@
 /*
- * OpenList STRM - Stream Management System
- * Copyright (C) 2024 OpenList STRM Project
+ * OStrm - Stream Management System
+ * Copyright (C) 2024 OStrm Project
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,9 +34,9 @@ public class OpenApiConfig {
     return new OpenAPI()
         .info(
             new Info()
-                .title("OpenList2Strm API")
+                .title("OStrm API")
                 .version("1.0")
-                .description("OpenList2Strm 单用户系统 API 文档"))
+                .description("OStrm 单用户系统 API 文档"))
         .addSecurityItem(new SecurityRequirement().addList("Bearer Authentication"))
         .components(
             new Components().addSecuritySchemes("Bearer Authentication", createAPIKeyScheme()));

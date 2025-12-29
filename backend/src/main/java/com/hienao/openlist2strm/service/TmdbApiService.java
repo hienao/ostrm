@@ -1,6 +1,7 @@
 package com.hienao.openlist2strm.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hienao.openlist2strm.constant.AppConstants;
 import com.hienao.openlist2strm.dto.tmdb.TmdbMovieDetail;
 import com.hienao.openlist2strm.dto.tmdb.TmdbSearchResponse;
 import com.hienao.openlist2strm.dto.tmdb.TmdbTvDetail;
@@ -150,7 +151,7 @@ public class TmdbApiService {
       logRequestDetails("GET", url, requestParams);
 
       HttpHeaders headers = new HttpHeaders();
-      headers.set("User-Agent", "OpenList2Strm/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       HttpEntity<String> entity = new HttpEntity<>(headers);
 
       ResponseEntity<String> response =
@@ -232,7 +233,7 @@ public class TmdbApiService {
       logRequestDetails("GET", url, requestParams);
 
       HttpHeaders headers = new HttpHeaders();
-      headers.set("User-Agent", "OpenList2Strm/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       HttpEntity<String> entity = new HttpEntity<>(headers);
 
       ResponseEntity<String> response =
@@ -304,7 +305,7 @@ public class TmdbApiService {
       logRequestDetails("GET", url, requestParams);
 
       HttpHeaders headers = new HttpHeaders();
-      headers.set("User-Agent", "OpenList2Strm/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       HttpEntity<String> entity = new HttpEntity<>(headers);
 
       ResponseEntity<String> response =
@@ -368,7 +369,7 @@ public class TmdbApiService {
       logRequestDetails("GET", url, requestParams);
 
       HttpHeaders headers = new HttpHeaders();
-      headers.set("User-Agent", "OpenList2Strm/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       HttpEntity<String> entity = new HttpEntity<>(headers);
 
       ResponseEntity<String> response =
@@ -465,7 +466,7 @@ public class TmdbApiService {
               .toUriString();
 
       HttpHeaders headers = new HttpHeaders();
-      headers.set("User-Agent", "OpenList2Strm/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       HttpEntity<String> entity = new HttpEntity<>(headers);
 
       ResponseEntity<String> response =

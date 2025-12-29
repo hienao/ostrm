@@ -2,6 +2,7 @@ package com.hienao.openlist2strm.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hienao.openlist2strm.config.cache.CacheConfig;
+import com.hienao.openlist2strm.constant.AppConstants;
 import com.hienao.openlist2strm.dto.version.GitHubRelease;
 import com.hienao.openlist2strm.dto.version.VersionCheckResponse;
 import java.time.LocalDateTime;
@@ -84,7 +85,7 @@ public class GitHubVersionService {
 
       HttpHeaders headers = new HttpHeaders();
       headers.set("Accept", "application/vnd.github.v3+json");
-      headers.set("User-Agent", "OpenList2Strm");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
 
       HttpEntity<?> entity = new HttpEntity<>(headers);
       ResponseEntity<String> response =

@@ -1,5 +1,6 @@
 package com.hienao.openlist2strm.config;
 
+import com.hienao.openlist2strm.constant.AppConstants;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -62,7 +63,7 @@ public class RestTemplateConfig {
     // 添加用户代理拦截器
     interceptors.add(
         (request, body, execution) -> {
-          request.getHeaders().set("User-Agent", "OpenList-STRM/1.0");
+          request.getHeaders().set("User-Agent", AppConstants.USER_AGENT);
           return execution.execute(request, body);
         });
 

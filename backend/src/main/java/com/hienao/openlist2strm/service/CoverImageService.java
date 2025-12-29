@@ -1,5 +1,6 @@
 package com.hienao.openlist2strm.service;
 
+import com.hienao.openlist2strm.constant.AppConstants;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -140,7 +141,7 @@ public class CoverImageService {
     try {
       // 设置请求头
       HttpHeaders headers = new HttpHeaders();
-      headers.set("User-Agent", "OpenList2Strm/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       headers.set("Accept", "image/*");
       HttpEntity<String> entity = new HttpEntity<>(headers);
 

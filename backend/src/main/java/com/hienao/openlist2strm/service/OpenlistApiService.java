@@ -2,6 +2,7 @@ package com.hienao.openlist2strm.service;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hienao.openlist2strm.constant.AppConstants;
 import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
 import com.hienao.openlist2strm.util.UrlEncoder;
@@ -221,7 +222,7 @@ public class OpenlistApiService {
       // 设置请求头
       HttpHeaders headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
-      headers.set("User-Agent", "OpenList-STRM/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       headers.set("Authorization", config.getToken());
 
       // 构建请求体
@@ -368,7 +369,7 @@ public class OpenlistApiService {
 
       // 设置请求头
       HttpHeaders headers = new HttpHeaders();
-      headers.set("User-Agent", "OpenList-STRM/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       if (config.getToken() != null && !config.getToken().isEmpty()) {
         headers.set("Authorization", config.getToken());
         log.debug(
@@ -410,7 +411,7 @@ public class OpenlistApiService {
 
           // 重新构建请求头
             HttpHeaders redirectHeaders = new HttpHeaders();
-            redirectHeaders.set("User-Agent", "OpenList-STRM/1.0");
+            redirectHeaders.set("User-Agent", AppConstants.USER_AGENT);
 
             // 只有重定向到同一域名时才发送认证头
             if (!isExternalRedirect && config.getToken() != null && !config.getToken().isEmpty()) {
@@ -520,7 +521,7 @@ public class OpenlistApiService {
 
       // 设置请求头
       HttpHeaders headers = new HttpHeaders();
-      headers.set("User-Agent", "OpenList-STRM/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       if (config.getToken() != null && !config.getToken().isEmpty()) {
         headers.set("Authorization", config.getToken());
         log.debug(
@@ -562,7 +563,7 @@ public class OpenlistApiService {
 
           // 重新构建请求头
             HttpHeaders redirectHeaders = new HttpHeaders();
-            redirectHeaders.set("User-Agent", "OpenList-STRM/1.0");
+            redirectHeaders.set("User-Agent", AppConstants.USER_AGENT);
 
             // 只有重定向到同一域名时才发送认证头
             if (!isExternalRedirect && config.getToken() != null && !config.getToken().isEmpty()) {
@@ -674,7 +675,7 @@ public class OpenlistApiService {
       // 设置请求头
       HttpHeaders headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
-      headers.set("User-Agent", "OpenList-STRM/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       headers.set("Authorization", token);
 
       HttpEntity<String> entity = new HttpEntity<>(headers);
@@ -767,7 +768,7 @@ public class OpenlistApiService {
       // 设置请求头
       HttpHeaders headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
-      headers.set("User-Agent", "OpenList-STRM/1.0");
+      headers.set("User-Agent", AppConstants.USER_AGENT);
       headers.set("Authorization", token);
 
       // 构建请求体
