@@ -168,6 +168,7 @@
               :items="logLines"
               :min-item-size="28" 
               key-field="id"
+              @update="onScrollerUpdate"
             >
               <template v-slot="{ item, index, active }">
                 <DynamicScrollerItem
@@ -295,6 +296,9 @@ const wsConnected = ref(false)
 const downloading = ref(false)
 const lastUpdateTime = ref('')
 const scroller = ref(null)
+
+// 标记是否有待处理的滚动请求
+const pendingScrollToBottom = ref(false)
 
 // 增量统计
 const logStats = reactive({
@@ -438,7 +442,11 @@ const batchAddLogs = (lines) => {
   // 如果需要严格连续行号，可以在 filterLogsByLevel 中重新生成。
   
   lastUpdateTime.value = new Date().toLocaleString('zh-CN')
-  throttledScrollToBottom()
+  
+  // 标记需要滚动到底部
+  if (autoScroll.value) {
+    pendingScrollToBottom.value = true
+  }
 }
 
 // 节流函数
@@ -457,13 +465,18 @@ const throttle = (func, limit) => {
 
 // 节流滚动
 const throttledScrollToBottom = throttle(() => {
-  if (autoScroll.value && scroller.value) {
-    // 虚拟滚动的 scrollToItem 方法，确保滚动到最后一行
-    if (logLines.value.length > 0) {
-      scroller.value.scrollToItem(logLines.value.length - 1)
-    }
+  if (autoScroll.value && scroller.value && logLines.value.length > 0) {
+    scroller.value.scrollToBottom()
   }
 }, 100)
+
+// DynamicScroller 更新事件处理
+const onScrollerUpdate = () => {
+  if (pendingScrollToBottom.value && autoScroll.value && scroller.value) {
+    scroller.value.scrollToBottom()
+    pendingScrollToBottom.value = false
+  }
+}
 
 // 简单的滚动到底部（非节流，用于手动触发）
 const scrollToBottom = () => {
