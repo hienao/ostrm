@@ -109,67 +109,56 @@ public class LogFileMonitorService {
     }
   }
 
-  /** 监控日志文件变化 */
+  /** 监控日志文件变化 (轮询模式) */
   private void monitorLogFile(String logType) {
     Path logFilePath = getLogFilePath(logType);
 
     try {
+      log.info("开始监控日志文件 (轮询): {}", logFilePath);
+
       // 如果文件不存在，等待文件创建
       while (!Files.exists(logFilePath)) {
-        Thread.sleep(5000);
+        Thread.sleep(2000);
         if (Thread.currentThread().isInterrupted()) {
           return;
         }
       }
 
-      // 初始化读取位置
-      long lastPosition = Files.size(logFilePath);
-      lastReadPositions.put(logType, lastPosition);
-
-      // 创建文件监控
-      WatchService watchService = FileSystems.getDefault().newWatchService();
-      Path logDir = logFilePath.getParent();
-      logDir.register(watchService, StandardWatchEventKinds.ENTRY_MODIFY);
-
-      log.info("开始监控日志文件: {}", logFilePath);
-
-      while (!Thread.currentThread().isInterrupted()) {
-        WatchKey key = watchService.poll(1, java.util.concurrent.TimeUnit.SECONDS);
-
-        if (key != null) {
-          for (WatchEvent<?> event : key.pollEvents()) {
-            WatchEvent.Kind<?> kind = event.kind();
-
-            if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
-              Path modifiedFile = (Path) event.context();
-              if (modifiedFile.toString().equals(logFilePath.getFileName().toString())) {
-                readAndBroadcastNewLines(logType, logFilePath);
-              }
-            }
-          }
-
-          boolean valid = key.reset();
-          if (!valid) {
-            break;
-          }
-        }
+      // 初始化读取位置为当前文件大小
+      try {
+        long lastPosition = Files.size(logFilePath);
+        lastReadPositions.put(logType, lastPosition);
+        log.info("日志文件已找到: {}, 初始大小: {}", logFilePath, lastPosition);
+      } catch (IOException e) {
+        log.error("获取初始文件大小失败: {}", logFilePath, e);
       }
 
-      watchService.close();
-
-    } catch (Exception e) {
-      if (!Thread.currentThread().isInterrupted()) {
-        log.error("监控日志文件异常: {}", logType, e);
-        // 重试监控
+      // 轮询循环
+      while (!Thread.currentThread().isInterrupted()) {
         try {
-          Thread.sleep(10000);
-          if (!Thread.currentThread().isInterrupted()) {
-            monitorLogFile(logType);
+          if (Files.exists(logFilePath)) {
+            readAndBroadcastNewLines(logType, logFilePath);
+          } else {
+            // 如果文件被删除，重置位置并等待重建
+            lastReadPositions.put(logType, 0L);
+            log.warn("日志文件被删除: {}", logFilePath);
           }
+          
+          Thread.sleep(500); // 500ms 轮询间隔
         } catch (InterruptedException ie) {
           Thread.currentThread().interrupt();
+          break;
+        } catch (Exception e) {
+          log.error("轮询日志文件异常: {}", logType, e);
+          // 发生异常暂停一下，避免死循环刷日志
+          Thread.sleep(5000);
         }
       }
+
+    } catch (InterruptedException ie) {
+      Thread.currentThread().interrupt();
+    } catch (Exception e) {
+      log.error("监控日志文件致命错误: {}", logType, e);
     }
   }
 
