@@ -368,17 +368,17 @@ For troubleshooting container issues:
 ### Direct Docker Commands
 ```bash
 # Build multi-platform image
-docker buildx build -t openlist2strm:latest --platform linux/amd64,linux/arm64 .
+docker buildx build -t ostrm:latest --platform linux/amd64,linux/arm64 .
 
 # Run container (single platform)
 docker run -d \
-  --name openlist2strm \
+  --name ostrm \
   -p 3111:80 \
   -v ./data/config:/maindata/config \
   -v ./data/db:/maindata/db \
   -v ./logs:/maindata/log \
   -v ./strm:/app/backend/strm \
-  openlist2strm:latest
+  ostrm:latest
 ```
 
 ### Path Standardization Benefits
