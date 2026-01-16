@@ -81,16 +81,24 @@ public class MediaScrapingService {
       String saveDirectory = buildSaveDirectory(strmDirectory, relativePath);
 
       // 处理字幕文件复制（在解析媒体之前执行）
+      // 处理字幕文件复制（在解析媒体之前执行）
       if (keepSubtitleFiles) {
-        copySubtitleFiles(openlistConfig, fileName, relativePath, saveDirectory, directoryFiles);
+        String[] subtitleExtensions = { ".srt", ".ass", ".vtt", ".ssa", ".sub", ".idx" };
+        copyRelatedFiles(openlistConfig, saveDirectory, directoryFiles, subtitleExtensions, "字幕文件");
       }
 
       // 检查是否优先使用已存在的刮削信息（独立于刮削功能启用状态）
-      if (useExistingScrapingInfo
-          && copyExistingScrapingInfo(
-              openlistConfig, fileName, relativePath, saveDirectory, directoryFiles)) {
-        log.info("已复制现有刮削信息，跳过后续处理: {}", fileName);
-        return;
+      if (useExistingScrapingInfo) {
+        boolean foundNfo = copyRelatedFiles(
+            openlistConfig, saveDirectory, directoryFiles, new String[]{".nfo"}, "NFO文件");
+        boolean foundImages = copyRelatedFiles(
+            openlistConfig, saveDirectory, directoryFiles, 
+            new String[]{".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}, "刮削图片");
+            
+        if (foundNfo || foundImages) {
+          log.info("已复制现有刮削信息，跳过后续处理: {}", fileName);
+          return;
+        }
       }
 
       // 检查刮削是否启用
@@ -799,187 +807,68 @@ public class MediaScrapingService {
    * @param saveDirectory  保存目录
    * @param directoryFiles 目录文件列表（可选，为null时不会调用API获取）
    */
-  private void copySubtitleFiles(
-      OpenlistConfig openlistConfig,
-      String fileName,
-      String relativePath,
-      String saveDirectory,
-      List<OpenlistApiService.OpenlistFile> directoryFiles) {
-    try {
-      String baseFileName = fileName.substring(0, fileName.lastIndexOf('.'));
-
-      // 支持的字幕文件后缀
-      String[] subtitleExtensions = { ".srt", ".ass", ".vtt", ".ssa", ".sub", ".idx" };
-
-      // 获取目录中的所有文件（优先使用传入的文件列表）
-      List<OpenlistApiService.OpenlistFile> files;
-      if (directoryFiles != null) {
-        files = directoryFiles;
-        log.debug("使用传入的目录文件列表，避免重复API调用");
-      } else {
-        log.debug("目录文件列表为空，跳过字幕文件复制");
-        return;
-      }
-
-      // 遍历目录中的所有文件，查找匹配的字幕文件
-      for (OpenlistApiService.OpenlistFile file : files) {
-        if ("file".equals(file.getType())) {
-          String fileName_lower = file.getName().toLowerCase();
-          String baseFileName_lower = baseFileName.toLowerCase();
-
-          // 检查是否是字幕文件：文件名以媒体文件基础名开头，且后缀是字幕格式
-          boolean isSubtitleFile = false;
-          for (String ext : subtitleExtensions) {
-            if (fileName_lower.startsWith(baseFileName_lower) && fileName_lower.endsWith(ext)) {
-              isSubtitleFile = true;
-              break;
-            }
-          }
-
-          if (isSubtitleFile) {
-            // 获取文件内容（使用OpenlistFile对象，包含sign签名参数，支持302重定向）
-            byte[] subtitleContent = openlistApiService.getFileContent(openlistConfig, file, false);
-
-            if (subtitleContent != null && subtitleContent.length > 0) {
-              Path targetFile = Paths.get(saveDirectory, file.getName());
-
-              // 确保目标目录存在
-              Files.createDirectories(targetFile.getParent());
-
-              // 写入字幕文件
-              Files.write(targetFile, subtitleContent);
-              log.info("已复制字幕文件: {} -> {}", file.getPath(), targetFile);
-            } else {
-              log.debug("字幕文件内容为空: {}", file.getPath());
-            }
-          }
-        }
-      }
-    } catch (Exception e) {
-      log.warn("复制字幕文件失败: {}", fileName, e);
-    }
-  }
-
   /**
-   * 复制已存在的刮削信息到STRM目录
+   * 复制目录中的相关文件（字幕、NFO、图片等）
    *
-   * @param fileName       媒体文件名
-   * @param relativePath   相对路径
-   * @param saveDirectory  保存目录
-   * @param directoryFiles 目录文件列表（可选，为null时不会调用API获取）
-   * @return 是否成功复制了刮削信息
+   * @param openlistConfig    OpenList配置
+   * @param saveDirectory     保存目录
+   * @param directoryFiles    目录文件列表
+   * @param allowedExtensions 允许的文件后缀数组
+   * @param fileTypeDescription 文件类型描述（用于日志）
+   * @return 是否成功复制了至少一个文件
    */
-  private boolean copyExistingScrapingInfo(
+  private boolean copyRelatedFiles(
       OpenlistConfig openlistConfig,
-      String fileName,
-      String relativePath,
       String saveDirectory,
-      List<OpenlistApiService.OpenlistFile> directoryFiles) {
+      List<OpenlistApiService.OpenlistFile> directoryFiles,
+      String[] allowedExtensions,
+      String fileTypeDescription) {
     try {
-      String baseFileName = fileName.substring(0, fileName.lastIndexOf('.'));
-
-      // 处理目录路径，使用完整的relativePath作为基础路径
-      String dirPath;
-      int lastSlashIndex = relativePath.lastIndexOf('/');
-      if (lastSlashIndex >= 0) {
-        // 使用完整的目录路径，包含OpenList的路径前缀
-        dirPath = relativePath.substring(0, lastSlashIndex + 1);
-      } else {
-        // 文件在根目录，使用根路径
-        dirPath = "/";
-      }
-
-      log.debug("[DEBUG] 构建文件路径 - relativePath: {}, dirPath: {}", relativePath, dirPath);
-
-      boolean foundScrapingInfo = false;
-
-      // 获取目录中的所有文件（优先使用传入的文件列表）
-      List<OpenlistApiService.OpenlistFile> files;
-      if (directoryFiles != null) {
-        files = directoryFiles;
-        log.debug("使用传入的目录文件列表，避免重复API调用");
-      } else {
-        log.debug("目录文件列表为空，跳过刮削信息复制");
+      if (directoryFiles == null || directoryFiles.isEmpty()) {
         return false;
       }
 
-      // 查找NFO文件 - 复制目录中所有NFO文件，不做文件名限制
-      for (OpenlistApiService.OpenlistFile file : files) {
+      boolean foundAndCopied = false;
+
+      // 遍历目录文件
+      for (OpenlistApiService.OpenlistFile file : directoryFiles) {
         if ("file".equals(file.getType())) {
           String fileName_lower = file.getName().toLowerCase();
-
-          // 检查是否是NFO文件：只要后缀是.nfo就复制
-          if (fileName_lower.endsWith(".nfo")) {
-            log.debug("准备复制NFO文件: {} (使用OpenlistFile对象)", file.getName());
-
-            // 刮削文件下载场景：不进行URL编码，避免认证问题
-            byte[] nfoContent = openlistApiService.getFileContent(openlistConfig, file, false);
-            if (nfoContent != null && nfoContent.length > 0) {
-              Path targetNfoFile = Paths.get(saveDirectory, file.getName());
-              Files.createDirectories(targetNfoFile.getParent());
-              Files.write(targetNfoFile, nfoContent);
-              log.info(
-                  "已复制NFO文件: {} -> {} (大小: {} bytes)",
-                  file.getName(),
-                  targetNfoFile,
-                  nfoContent.length);
-              foundScrapingInfo = true;
-            } else {
-              log.debug("NFO文件内容为空: {}", file.getName());
-            }
-          }
-        }
-      }
-
-      // 查找刮削图片文件 - 复制目录中所有图片文件，不做文件名限制
-      String[] imageExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff" };
-
-      for (OpenlistApiService.OpenlistFile file : files) {
-        if ("file".equals(file.getType())) {
-          String fileName_lower = file.getName().toLowerCase();
-
-          // 检查是否是图片文件：只要后缀是图片格式就复制
-          boolean isImageFile = false;
-          for (String ext : imageExtensions) {
+          boolean isMatch = false;
+          for (String ext : allowedExtensions) {
             if (fileName_lower.endsWith(ext)) {
-              isImageFile = true;
+              isMatch = true;
               break;
             }
           }
 
-          if (isImageFile) {
-            log.debug("准备复制图片文件: {} (使用OpenlistFile对象)", file.getName());
+          if (isMatch) {
+            log.debug("准备复制{}文件: {}", fileTypeDescription, file.getName());
 
-            // 刮削文件下载场景：不进行URL编码，避免认证问题
-            byte[] imageContent = openlistApiService.getFileContent(openlistConfig, file, false);
-            if (imageContent != null && imageContent.length > 0) {
-              // 检查文件内容是否真的是图片（简单检查前几个字节）
-              String contentType = detectFileType(imageContent);
-              log.debug("图片文件内容类型检测: {} -> {}", file.getName(), contentType);
+            // 下载文件内容 (不使用URL编码)
+            byte[] content = openlistApiService.getFileContent(openlistConfig, file, false);
 
-              Path targetImageFile = Paths.get(saveDirectory, file.getName());
-              Files.createDirectories(targetImageFile.getParent());
-              Files.write(targetImageFile, imageContent);
+            if (content != null && content.length > 0) {
+              Path targetFile = Paths.get(saveDirectory, file.getName());
+              Files.createDirectories(targetFile.getParent());
+              Files.write(targetFile, content);
+
               log.info(
-                  "已复制刮削图片: {} -> {} (大小: {} bytes, 类型: {})",
+                  "已复制{}: {} -> {} (大小: {} bytes)",
+                  fileTypeDescription,
                   file.getName(),
-                  targetImageFile,
-                  imageContent.length,
-                  contentType);
-              foundScrapingInfo = true;
+                  targetFile,
+                  content.length);
+              foundAndCopied = true;
             } else {
-              log.debug("刮削图片内容为空: {}", file.getName());
+              log.debug("{}内容为空: {}", fileTypeDescription, file.getName());
             }
           }
         }
       }
-
-      // 注意：上面的循环已经复制了所有NFO文件和图片文件，包括电视剧相关的文件
-      // 不需要额外的电视剧文件处理逻辑，因为已经移除了文件名限制
-
-      return foundScrapingInfo;
+      return foundAndCopied;
     } catch (Exception e) {
-      log.warn("复制已存在刮削信息失败: {}", fileName, e);
+      log.warn("复制{}失败: {}", fileTypeDescription, e.getMessage());
       return false;
     }
   }
