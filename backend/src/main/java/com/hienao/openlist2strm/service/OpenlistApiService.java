@@ -381,7 +381,7 @@ public class OpenlistApiService {
 
       // 发送GET请求获取文件内容 - 使用URI对象避免Spring将{...}解析为模板变量
       ResponseEntity<byte[]> response =
-          restTemplate.exchange(java.net.URI.create(fileUrl), HttpMethod.GET, entity, byte[].class);
+          restTemplate.exchange(java.net.URI.create(UrlEncoder.encodeUrlSmart(fileUrl)), HttpMethod.GET, entity, byte[].class);
 
       log.debug(
           "文件下载响应 - 状态码: {}, Content-Type: {}, Headers: {}",
@@ -533,7 +533,7 @@ public class OpenlistApiService {
 
       // 发送GET请求获取文件内容 - 使用URI对象避免Spring将{...}解析为模板变量
       ResponseEntity<byte[]> response =
-          restTemplate.exchange(java.net.URI.create(fileUrl), HttpMethod.GET, entity, byte[].class);
+          restTemplate.exchange(java.net.URI.create(UrlEncoder.encodeUrlSmart(fileUrl)), HttpMethod.GET, entity, byte[].class);
 
       log.debug(
           "文件下载响应 - 状态码: {}, Content-Type: {}, Headers: {}",
@@ -961,7 +961,6 @@ public class OpenlistApiService {
             .pathSegment("d")
             .path(filePath)
             .build()
-            .encode()
             .toUriString();
 
     log.debug("URL构建编码: {}{}d{} -> {}", baseUrl, "d", filePath, result);
