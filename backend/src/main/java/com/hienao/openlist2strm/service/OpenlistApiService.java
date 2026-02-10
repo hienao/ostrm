@@ -961,6 +961,7 @@ public class OpenlistApiService {
             .pathSegment("d")
             .path(filePath)
             .build()
+            .encode()
             .toUriString();
 
     log.debug("URL构建编码: {}{}d{} -> {}", baseUrl, "d", filePath, result);
