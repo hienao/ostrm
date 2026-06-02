@@ -418,7 +418,20 @@ public class OrphanCleanupHandler implements FileProcessorHandler {
         || lower.endsWith(".wmv")
         || lower.endsWith(".flv")
         || lower.endsWith(".webm")
-        || lower.endsWith(".m4v");
+        || lower.endsWith(".m4v")
+        || lower.endsWith(".rmvb")
+        || lower.endsWith(".rm")
+        || lower.endsWith(".m2ts")
+        || lower.endsWith(".ts")
+        || lower.endsWith(".3gp")
+        || lower.endsWith(".mpeg")
+        || lower.endsWith(".mpg")
+        || lower.endsWith(".divx")
+        || lower.endsWith(".f4v")
+        || lower.endsWith(".ogv")
+        || lower.endsWith(".vob")
+        || lower.endsWith(".xvid")
+        || lower.endsWith(".iso");
   }
 
   private boolean isImageFile(String fileName) {
