@@ -45,4 +45,7 @@ public class OpenlistConfig {
 
   /** 是否启用URL编码：1-启用（默认），0-禁用 */
   private Boolean enableUrlEncoding;
+
+  /** OpenList 文件系统 API 每分钟最大调用次数：0-不限制 */
+  private Integer fsApiQpmLimit;
 }
