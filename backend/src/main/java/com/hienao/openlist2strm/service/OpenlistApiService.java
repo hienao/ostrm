@@ -29,6 +29,7 @@ public class OpenlistApiService {
 
   private final RestTemplate restTemplate;
   private final ObjectMapper objectMapper;
+  private final OpenlistApiRateLimiter apiRateLimiter;
 
   /** OpenList API响应数据结构 */
   @Data
@@ -232,6 +233,7 @@ public class OpenlistApiService {
       HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
 
       // 发送请求 - 使用POST方法
+      apiRateLimiter.acquire(config, "/api/fs/list");
       ResponseEntity<String> response =
           restTemplate.exchange(requestUrl, HttpMethod.POST, entity, String.class);
 
@@ -776,15 +778,14 @@ public class OpenlistApiService {
   /**
    * 验证任务路径是否存在
    *
-   * @param baseUrl OpenList服务地址
-   * @param token 认证Token
-   * @param basePath 用户的basePath
+   * @param config OpenList配置
    * @param taskPath 任务路径
    * @return 是否为有效目录
    */
-  public boolean validatePath(String baseUrl, String token, String basePath, String taskPath) {
+  public boolean validatePath(OpenlistConfig config, String taskPath) {
     try {
       // 拼接完整路径
+      String basePath = config.getBasePath() != null ? config.getBasePath() : "/";
       String fullPath = basePath;
       if (fullPath.endsWith("/") && taskPath.startsWith("/")) {
         fullPath = fullPath.substring(0, fullPath.length() - 1) + taskPath;
@@ -795,7 +796,7 @@ public class OpenlistApiService {
       }
 
       // 构建API URL
-      String apiUrl = baseUrl;
+      String apiUrl = config.getBaseUrl();
       if (!apiUrl.endsWith("/")) {
         apiUrl += "/";
       }
@@ -807,7 +808,7 @@ public class OpenlistApiService {
       HttpHeaders headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
       headers.set("User-Agent", AppConstants.USER_AGENT);
-      headers.set("Authorization", token);
+      headers.set("Authorization", config.getToken());
 
       // 构建请求体
       String requestBody =
@@ -818,6 +819,7 @@ public class OpenlistApiService {
       HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
 
       // 发送POST请求
+      apiRateLimiter.acquire(config, "/api/fs/get");
       ResponseEntity<String> response =
           restTemplate.exchange(apiUrl, HttpMethod.POST, entity, String.class);
 

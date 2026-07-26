@@ -169,8 +169,11 @@ public class OpenlistConfigController {
       @Parameter(description = "验证路径请求", required = true) @RequestBody
           ValidatePathRequest request) {
     try {
-      openlistApiService.validatePath(
-          request.getBaseUrl(), request.getToken(), request.getBasePath(), request.getTaskPath());
+      OpenlistConfig config = openlistConfigService.getById(request.getOpenlistConfigId());
+      if (config == null) {
+        return ResponseEntity.ok(ApiResponse.error(404, "OpenList配置不存在"));
+      }
+      openlistApiService.validatePath(config, request.getTaskPath());
       return ResponseEntity.ok(ApiResponse.success(null));
     } catch (Exception e) {
       log.error("验证任务路径失败: {}", e.getMessage());
@@ -237,33 +240,15 @@ public class OpenlistConfigController {
 
   /** 验证路径请求DTO */
   public static class ValidatePathRequest {
-    private String baseUrl;
-    private String token;
-    private String basePath;
+    private Long openlistConfigId;
     private String taskPath;
 
-    public String getBaseUrl() {
-      return baseUrl;
+    public Long getOpenlistConfigId() {
+      return openlistConfigId;
     }
 
-    public void setBaseUrl(String baseUrl) {
-      this.baseUrl = baseUrl;
-    }
-
-    public String getToken() {
-      return token;
-    }
-
-    public void setToken(String token) {
-      this.token = token;
-    }
-
-    public String getBasePath() {
-      return basePath;
-    }
-
-    public void setBasePath(String basePath) {
-      this.basePath = basePath;
+    public void setOpenlistConfigId(Long openlistConfigId) {
+      this.openlistConfigId = openlistConfigId;
     }
 
     public String getTaskPath() {

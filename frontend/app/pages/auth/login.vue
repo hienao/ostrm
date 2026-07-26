@@ -19,8 +19,17 @@
 <template>
   <div class="min-h-screen flex items-center justify-center py-12 px-4">
     <div class="max-w-md w-full space-y-8">
+      <!-- 检查用户注册状态 -->
+      <div v-if="checkingUser" class="text-center">
+        <svg class="loading-spinner mx-auto mb-4 w-8 h-8 text-blue-400" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <p class="text-sm text-white/40">正在检查账户状态...</p>
+      </div>
+
       <!-- 登录页面 -->
-      <div v-if="!showRegister" class="animate-fade-in">
+      <div v-else-if="!showRegister" class="animate-fade-in">
         <!-- Logo和标题 -->
         <div class="text-center mb-8">
           <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-blue-900/20">
@@ -123,11 +132,6 @@
               </div>
 
               <div>
-                <label for="reg-email" class="block text-sm font-medium text-white/70 mb-2">邮箱</label>
-                <input id="reg-email" v-model="registerForm.email" type="email" required class="input-field" placeholder="请输入邮箱地址" :disabled="registerLoading" />
-              </div>
-
-              <div>
                 <label for="reg-password" class="block text-sm font-medium text-white/70 mb-2">密码</label>
                 <input id="reg-password" v-model="registerForm.password" type="password" required class="input-field" placeholder="请输入密码" :disabled="registerLoading" />
               </div>
@@ -166,7 +170,7 @@
               {{ registerLoading ? '注册中...' : '注册' }}
             </button>
 
-            <div class="text-center">
+            <div v-if="userExists" class="text-center">
               <button type="button" @click="showRegister = false; clearForms()" class="text-sm text-white/50 hover:text-white transition-colors">
                 返回登录
               </button>
@@ -179,7 +183,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, nextTick } from 'vue'
+import { ref, reactive, nextTick, onMounted } from 'vue'
 import { apiCall } from '~/core/api/client'
 import logger from '~/core/utils/logger'
 import { useAuthStore } from '~/core/stores/auth'
@@ -191,12 +195,33 @@ const loading = ref(false)
 const error = ref('')
 const success = ref(false)
 const showRegister = ref(false)
+const checkingUser = ref(true)
+const userExists = ref(false)
 const registerLoading = ref(false)
 const registerError = ref('')
 const registerSuccess = ref(false)
 
 const form = reactive({ username: '', password: '', rememberMe: false })
-const registerForm = reactive({ username: '', email: '', password: '', confirmPassword: '' })
+const registerForm = reactive({ username: '', password: '', confirmPassword: '' })
+
+const checkUserRegistration = async () => {
+  checkingUser.value = true
+
+  try {
+    const response = await apiCall('/auth/check-user')
+    userExists.value = response.data?.exists === true
+    showRegister.value = !userExists.value
+  } catch (err) {
+    logger.error('检查用户注册状态失败:', err)
+    userExists.value = true
+    showRegister.value = false
+    error.value = '无法检查账户状态，请确认服务已正常启动'
+  } finally {
+    checkingUser.value = false
+  }
+}
+
+onMounted(checkUserRegistration)
 
 const handleLogin = async () => {
   if (!form.username || !form.password) {
@@ -241,10 +266,6 @@ const handleLogin = async () => {
 
     if (err.status === 401) {
       error.value = '用户名或密码错误'
-    } else if (err.status === 404) {
-      showRegister.value = true
-      registerForm.username = form.username
-      error.value = ''
     } else if (err.status === 500) {
       error.value = '服务器错误，请稍后重试'
     } else {
@@ -256,15 +277,13 @@ const handleLogin = async () => {
 }
 
 const validateRegisterForm = () => {
-  if (!registerForm.username || !registerForm.email || !registerForm.password || !registerForm.confirmPassword) {
+  if (!registerForm.username || !registerForm.password || !registerForm.confirmPassword) {
     registerError.value = '请填写所有必填字段'
     return false
   }
   if (registerForm.username.length < 3) { registerError.value = '用户名至少需要3个字符'; return false }
   if (registerForm.password.length < 6) { registerError.value = '密码至少需要6个字符'; return false }
   if (registerForm.password !== registerForm.confirmPassword) { registerError.value = '两次输入的密码不一致'; return false }
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  if (!emailRegex.test(registerForm.email)) { registerError.value = '请输入有效的邮箱地址'; return false }
   return true
 }
 
@@ -276,14 +295,15 @@ const handleRegister = async () => {
   registerSuccess.value = false
 
   try {
-    const response = await apiCall('/sign-up', {
+    const response = await apiCall('/auth/sign-up', {
       method: 'POST',
-      body: { username: registerForm.username, email: registerForm.email, password: registerForm.password }
+      body: { username: registerForm.username, password: registerForm.password }
     })
 
     if (response.code === 200) {
       registerSuccess.value = true
       setTimeout(() => {
+        userExists.value = true
         showRegister.value = false
         form.username = registerForm.username
         clearForms()
@@ -303,7 +323,6 @@ const handleRegister = async () => {
 
 const clearForms = () => {
   registerForm.username = ''
-  registerForm.email = ''
   registerForm.password = ''
   registerForm.confirmPassword = ''
   registerError.value = ''
