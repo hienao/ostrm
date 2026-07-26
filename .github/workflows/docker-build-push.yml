@@ -123,12 +123,8 @@ jobs:
           APP_VERSION=${{ needs.determine-version.outputs.version }}
         provenance: false
         sbom: false
-        cache-from: |
-          type=gha,scope=amd64
-          type=registry,ref=docker.io/${{ vars.DOCKERHUB_USERNAME }}/ostrm:buildcache-amd64
-        cache-to: |
-          type=gha,mode=max,scope=amd64
-          type=registry,ref=docker.io/${{ vars.DOCKERHUB_USERNAME }}/ostrm:buildcache-amd64,mode=max
+        cache-from: type=registry,ref=docker.io/${{ vars.DOCKERHUB_USERNAME }}/ostrm:buildcache-amd64
+        cache-to: type=registry,ref=docker.io/${{ vars.DOCKERHUB_USERNAME }}/ostrm:buildcache-amd64,mode=max
 
   build-arm64:
     runs-on: ubuntu-24.04-arm
@@ -184,12 +180,8 @@ jobs:
           APP_VERSION=${{ needs.determine-version.outputs.version }}
         provenance: false
         sbom: false
-        cache-from: |
-          type=gha,scope=arm64
-          type=registry,ref=docker.io/${{ vars.DOCKERHUB_USERNAME }}/ostrm:buildcache-arm64
-        cache-to: |
-          type=gha,mode=max,scope=arm64
-          type=registry,ref=docker.io/${{ vars.DOCKERHUB_USERNAME }}/ostrm:buildcache-arm64,mode=max
+        cache-from: type=registry,ref=docker.io/${{ vars.DOCKERHUB_USERNAME }}/ostrm:buildcache-arm64
+        cache-to: type=registry,ref=docker.io/${{ vars.DOCKERHUB_USERNAME }}/ostrm:buildcache-arm64,mode=max
 
   create-manifest:
     runs-on: ubuntu-latest
