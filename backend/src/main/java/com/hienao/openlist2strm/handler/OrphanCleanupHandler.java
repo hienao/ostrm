@@ -43,6 +43,11 @@ public class OrphanCleanupHandler implements FileProcessorHandler {
   @Override
   public ProcessingResult process(FileProcessingContext context) {
     try {
+      if (context.getCurrentFile() != null) {
+        log.trace("单文件上下文跳过孤立文件清理: {}", context.getCurrentFile().getPath());
+        return ProcessingResult.SKIPPED;
+      }
+
       // 只在增量模式下执行清理
       if (!Boolean.TRUE.equals(context.getTaskConfig().getIsIncrement())) {
         log.debug("非增量模式，跳过孤立文件清理");

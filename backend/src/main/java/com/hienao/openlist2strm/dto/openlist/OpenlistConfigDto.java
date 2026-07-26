@@ -1,5 +1,7 @@
 package com.hienao.openlist2strm.dto.openlist;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -47,4 +49,7 @@ public class OpenlistConfigDto {
 
   /** 是否启用URL编码：true-启用（默认），false-禁用 */
   private Boolean enableUrlEncoding;
+
+  /** OpenList 文件系统 API 每分钟最大调用次数：0-不限制 */
+  @Min(value = 0, message = "API 每分钟调用次数不能小于0") @Max(value = 6000, message = "API 每分钟调用次数不能大于6000") private Integer fsApiQpmLimit;
 }

@@ -152,6 +152,13 @@
               </div>
             </div>
 
+            <div class="bg-white/5 rounded-lg p-3 border border-white/6">
+              <label class="text-xs font-medium text-white/40 uppercase tracking-wider">文件 API 限速</label>
+              <p class="mt-1 text-sm text-white/80">
+                {{ config.fsApiQpmLimit > 0 ? `${config.fsApiQpmLimit} 次/分钟` : '不限制' }}
+              </p>
+            </div>
+
             <div v-if="config.strmBaseUrl" class="bg-blue-500/5 rounded-lg p-3 border border-blue-500/10">
               <label class="text-xs font-medium text-blue-400 uppercase tracking-wider">STRM Base URL</label>
               <p class="mt-1 text-sm text-white/80 break-all font-mono">{{ config.strmBaseUrl }}</p>
@@ -235,6 +242,12 @@
                 <p class="mt-1 text-xs text-white/30">用于STRM文件生成时替换原始URL的baseUrl，留空则不进行替换</p>
               </div>
 
+              <div>
+                <label for="fsApiQpmLimit" class="block text-sm font-medium text-white/70 mb-2">文件 API 每分钟最大调用次数</label>
+                <input id="fsApiQpmLimit" v-model.number="configForm.fsApiQpmLimit" type="number" min="0" max="6000" required class="input-field" :disabled="formLoading" />
+                <p class="mt-1 text-xs text-white/30">限制目录列表和文件信息 API 的合计调用频率，0 表示不限制</p>
+              </div>
+
               <div class="flex items-start gap-3">
                 <input id="enableUrlEncoding" v-model="configForm.enableUrlEncoding" type="checkbox" class="mt-1" :disabled="formLoading" />
                 <label for="enableUrlEncoding" class="text-sm text-white/70">
@@ -299,6 +312,12 @@
                 <p class="mt-1 text-xs text-white/30">用于STRM文件生成时替换原始URL的baseUrl，留空则不进行替换</p>
               </div>
 
+              <div>
+                <label for="editFsApiQpmLimit" class="block text-sm font-medium text-white/70 mb-2">文件 API 每分钟最大调用次数</label>
+                <input id="editFsApiQpmLimit" v-model.number="configForm.fsApiQpmLimit" type="number" min="0" max="6000" required class="input-field" :disabled="formLoading" />
+                <p class="mt-1 text-xs text-white/30">限制目录列表和文件信息 API 的合计调用频率，0 表示不限制</p>
+              </div>
+
               <div class="flex items-start gap-3">
                 <input id="editEnableUrlEncoding" v-model="configForm.enableUrlEncoding" type="checkbox" class="mt-1" :disabled="formLoading" />
                 <label for="editEnableUrlEncoding" class="text-sm text-white/70">
@@ -348,7 +367,7 @@ const loading = ref(false)
 const showAddModal = ref(false)
 const showEditModal = ref(false)
 const currentConfig = ref(null)
-const configForm = ref({ baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true })
+const configForm = ref({ baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true, fsApiQpmLimit: 0 })
 const formLoading = ref(false)
 const formError = ref('')
 
@@ -415,7 +434,13 @@ const addConfig = async () => {
 
 const editConfig = (config) => {
   currentConfig.value = config
-  configForm.value = { baseUrl: config.baseUrl, token: config.token, strmBaseUrl: config.strmBaseUrl || '', enableUrlEncoding: config.enableUrlEncoding !== false }
+  configForm.value = {
+    baseUrl: config.baseUrl,
+    token: config.token,
+    strmBaseUrl: config.strmBaseUrl || '',
+    enableUrlEncoding: config.enableUrlEncoding !== false,
+    fsApiQpmLimit: config.fsApiQpmLimit || 0
+  }
   showEditModal.value = true
 }
 
@@ -470,7 +495,7 @@ const toggleConfigStatus = async (config) => {
 
 const closeAddModal = () => {
   showAddModal.value = false
-  configForm.value = { baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true }
+  configForm.value = { baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true, fsApiQpmLimit: 0 }
   formError.value = ''
   formLoading.value = false
 }
@@ -478,7 +503,7 @@ const closeAddModal = () => {
 const closeEditModal = () => {
   showEditModal.value = false
   currentConfig.value = null
-  configForm.value = { baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true }
+  configForm.value = { baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true, fsApiQpmLimit: 0 }
   formError.value = ''
   formLoading.value = false
 }

@@ -127,6 +127,9 @@ public class OpenlistConfigService {
     if (config.getIsActive() == null) {
       config.setIsActive(true);
     }
+    if (config.getFsApiQpmLimit() == null) {
+      config.setFsApiQpmLimit(0);
+    }
 
     log.info("创建OpenList配置 - strmBaseUrl: '{}'", config.getStrmBaseUrl());
     int result = openlistConfigMapper.insert(config);
@@ -156,6 +159,9 @@ public class OpenlistConfigService {
       throw new BusinessException("配置不存在，ID: " + config.getId());
     }
 
+    if (config.getFsApiQpmLimit() == null) {
+      config.setFsApiQpmLimit(existingConfig.getFsApiQpmLimit());
+    }
     validateConfig(config);
 
     // 记录更新前的配置信息
@@ -252,6 +258,10 @@ public class OpenlistConfigService {
     }
     if (!StringUtils.hasText(config.getUsername())) {
       throw new BusinessException("用户名不能为空");
+    }
+    if (config.getFsApiQpmLimit() != null
+        && (config.getFsApiQpmLimit() < 0 || config.getFsApiQpmLimit() > 6000)) {
+      throw new BusinessException("API 每分钟调用次数必须在0到6000之间");
     }
 
     // 验证URL格式

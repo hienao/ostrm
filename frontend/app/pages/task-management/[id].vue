@@ -406,7 +406,7 @@ const validateTaskPath = async (taskPath) => {
     if (!configInfo.value) throw new Error('配置信息未加载')
     const response = await authenticatedApiCall('/openlist-config/validate-path', {
       method: 'POST',
-      body: { baseUrl: configInfo.value.baseUrl, token: configInfo.value.token, basePath: configInfo.value.basePath, taskPath }
+      body: { openlistConfigId: parseInt(configId), taskPath }
     })
     if (response.code !== 200) throw new Error(response.message || '路径验证失败')
   } catch (error) {

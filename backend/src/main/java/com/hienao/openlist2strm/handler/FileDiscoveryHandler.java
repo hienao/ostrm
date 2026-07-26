@@ -35,6 +35,11 @@ public class FileDiscoveryHandler implements FileProcessorHandler {
   @Override
   public ProcessingResult process(FileProcessingContext context) {
     try {
+      if (context.getCurrentFile() != null) {
+        log.trace("单文件上下文已包含当前文件，跳过文件发现: {}", context.getCurrentFile().getPath());
+        return ProcessingResult.SUCCESS;
+      }
+
       log.debug("开始文件发现: {}", context.getRelativePath());
 
       List<OpenlistApiService.OpenlistFile> allFiles = new ArrayList<>();
