@@ -1,5 +1,7 @@
 package com.hienao.openlist2strm.dto.media;
 
+import com.hienao.openlist2strm.entity.MediaLibraryType;
+import java.util.List;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -26,6 +28,9 @@ public class AiRecognitionResult {
 
   /** 标题 */
   private String title;
+
+  /** 可用于 TMDB 搜索的候选标题，按优先级排序 */
+  private List<String> titleCandidates;
 
   /** 年份 */
   private String year;
@@ -86,8 +91,24 @@ public class AiRecognitionResult {
    * @return MediaInfo对象
    */
   public MediaInfo toMediaInfo(String originalFileName) {
+    return toMediaInfo(originalFileName, MediaLibraryType.AUTO.value());
+  }
+
+  /**
+   * 根据任务媒体库类型构建媒体信息。任务的明确类型优先于模型推断。
+   *
+   * @param originalFileName 原始文件名
+   * @param libraryTypeValue 任务媒体库类型
+   * @return MediaInfo对象
+   */
+  public MediaInfo toMediaInfo(String originalFileName, String libraryTypeValue) {
+    MediaLibraryType libraryType = MediaLibraryType.from(libraryTypeValue);
+    MediaInfo.MediaType resolvedType =
+        libraryType == MediaLibraryType.MOVIE
+            ? MediaInfo.MediaType.MOVIE
+            : libraryType.isTvLike() ? MediaInfo.MediaType.TV_SHOW : getMediaType();
     MediaInfo mediaInfo =
-        new MediaInfo().setOriginalFileName(originalFileName).setType(getMediaType());
+        new MediaInfo().setOriginalFileName(originalFileName).setType(resolvedType);
 
     if (isNewFormat()) {
       // 新格式：直接使用分离的字段
