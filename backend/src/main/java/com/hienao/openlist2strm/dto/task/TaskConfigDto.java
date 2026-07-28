@@ -2,6 +2,7 @@ package com.hienao.openlist2strm.dto.task;
 
 import com.hienao.openlist2strm.validation.ValidCronExpression;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import lombok.Data;
@@ -31,6 +32,13 @@ public class TaskConfigDto {
 
   /** 是否需要刮削：true-需要，false-不需要 */
   private Boolean needScrap;
+
+  /** 媒体库类型：auto/movie/tv/anime */
+  @Pattern(
+      regexp = "^(auto|movie|tv|anime)$",
+      flags = Pattern.Flag.CASE_INSENSITIVE,
+      message = "媒体库类型必须是 auto、movie、tv 或 anime")
+  private String libraryType;
 
   /** 重命名正则表达式，为空时表示不需要重命名 */
   @Size(max = 500, message = "重命名正则表达式长度不能超过500个字符") private String renameRegex;

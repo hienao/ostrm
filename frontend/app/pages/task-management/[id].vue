@@ -114,6 +114,10 @@
                 <dd class="mt-1 text-sm text-white/80 break-all font-mono">{{ task.path }}</dd>
               </div>
               <div>
+                <dt class="text-sm text-white/40">媒体库类型</dt>
+                <dd class="mt-1 text-sm text-white/80">{{ libraryTypeLabel(task.libraryType) }}</dd>
+              </div>
+              <div>
                 <dt class="text-sm text-white/40">STRM路径</dt>
                 <dd class="mt-1 text-sm text-white/80 break-all font-mono">{{ task.strmPath }}</dd>
               </div>
@@ -193,6 +197,20 @@
               <div>
                 <label class="block text-sm text-white/70 mb-2">任务路径 *</label>
                 <input v-model="taskForm.path" type="text" required class="input-field" placeholder="请输入OpenList中的媒体路径">
+              </div>
+
+              <div>
+                <label class="block text-sm text-white/70 mb-2">媒体库类型 *</label>
+                <select v-model="taskForm.libraryType" required class="input-field">
+                  <option disabled value="">请选择当前任务目录的媒体类型</option>
+                  <option value="movie">电影</option>
+                  <option value="tv">电视剧</option>
+                  <option value="anime">动画（按电视剧刮削）</option>
+                  <option value="auto">自动识别（兼容旧任务）</option>
+                </select>
+                <p class="mt-1 text-xs text-white/30">
+                  系统会按所选类型解释目录层级，并约束 TMDB 和 AI 的媒体类型
+                </p>
               </div>
 
               <div>
@@ -341,6 +359,7 @@ const generatingStrm = ref({})
 const taskForm = ref({
   taskName: '',
   path: '',
+  libraryType: '',
   strmPath: '/app/backend/strm',
   cron: '',
   needScrap: false,
@@ -383,7 +402,7 @@ const fetchTasks = async () => {
 const resetTaskForm = () => {
   taskForm.value = {
     taskName: '', path: '', strmPath: '/app/backend/strm', cron: '',
-    needScrap: false, renameRegex: '', isIncrement: true, isActive: true
+    libraryType: '', needScrap: false, renameRegex: '', isIncrement: true, isActive: true
   }
   strmSubPath.value = ''
   showRenameRegexHelp.value = false
@@ -393,7 +412,7 @@ const editTask = (task) => {
   editingTaskId.value = task.id
   taskForm.value = {
     taskName: task.taskName, path: task.path, strmPath: task.strmPath,
-    cron: task.cron || '', needScrap: task.needScrap || false,
+    libraryType: task.libraryType || 'auto', cron: task.cron || '', needScrap: task.needScrap || false,
     renameRegex: task.renameRegex || '', isIncrement: task.isIncrement, isActive: task.isActive
   }
   const prefix = '/app/backend/strm/'
@@ -459,6 +478,13 @@ const closeModal = () => {
 }
 
 const formatDate = (timestamp) => !timestamp || timestamp === 0 ? '未执行' : new Date(timestamp).toLocaleString('zh-CN')
+
+const libraryTypeLabel = (libraryType) => ({
+  movie: '电影',
+  tv: '电视剧',
+  anime: '动画',
+  auto: '自动识别'
+}[libraryType || 'auto'] || '自动识别')
 
 const showExecuteModal = (taskId) => {
   currentTaskId.value = taskId
