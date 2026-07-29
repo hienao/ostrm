@@ -130,4 +130,17 @@ public class SystemConfigController {
       return ResponseEntity.ok(ApiResponse.error("测试 AI 配置失败: " + e.getMessage()));
     }
   }
+
+  /** 获取默认 AI 提示词 */
+  @GetMapping("/default-ai-prompt")
+  @Operation(summary = "获取默认 AI 提示词", description = "获取系统默认的 AI 识别提示词")
+  public ResponseEntity<ApiResponse<String>> getDefaultAiPrompt() {
+    try {
+      String defaultPrompt = systemConfigService.getDefaultAiPrompt();
+      return ResponseEntity.ok(ApiResponse.success(defaultPrompt));
+    } catch (Exception e) {
+      log.error("获取默认 AI 提示词失败", e);
+      return ResponseEntity.ok(ApiResponse.error("获取默认 AI 提示词失败: " + e.getMessage()));
+    }
+  }
 }

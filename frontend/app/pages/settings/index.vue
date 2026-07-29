@@ -225,6 +225,17 @@
                 </div>
               </div>
 
+              <div>
+                <div class="flex items-center justify-between mb-2">
+                  <label for="aiPrompt" class="block text-sm text-white/70">提示词</label>
+                  <button type="button" @click="resetAiPrompt" class="text-xs text-blue-400 hover:text-blue-300" :disabled="resettingPrompt">
+                    {{ resettingPrompt ? '重置中...' : '重置为默认' }}
+                  </button>
+                </div>
+                <textarea id="aiPrompt" v-model="aiConfig.prompt" rows="6" class="input-field resize-none" placeholder="输入 AI 识别提示词..."></textarea>
+                <p class="mt-1 text-xs text-white/30">定义 AI 如何识别和标准化文件名</p>
+              </div>
+
               <div class="flex items-center gap-3">
                 <button type="button" @click="testAiConfig" class="btn-success" :disabled="testingAi">
                   <svg v-if="testingAi" class="loading-spinner -ml-1 mr-2 w-4 h-4" fill="none" viewBox="0 0 24 24">
@@ -354,7 +365,7 @@ const availableExtensions = ref([])
 const selectedExtensions = ref([])
 const tmdbConfig = ref({ apiKey: '', language: 'zh-CN', region: 'CN', proxyHost: '', proxyPort: '', baseUrl: 'https://api.themoviedb.org', imageBaseUrl: 'https://image.tmdb.org' })
 const scrapingConfig = ref({ enabled: true, keepSubtitleFiles: false, useExistingScrapingInfo: false })
-const aiConfig = ref({ enabled: false, baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-3.5-turbo', qpmLimit: 60 })
+const aiConfig = ref({ enabled: false, baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-3.5-turbo', qpmLimit: 60, prompt: '' })
 const logConfig = ref({ retentionDays: 7, level: 'info', reportUsageData: true })
 const showApiKey = ref(false)
 const saving = ref(false)
@@ -362,6 +373,7 @@ const showSuccess = ref(false)
 const errorMessage = ref('')
 const testingAi = ref(false)
 const aiTestResult = ref(null)
+const resettingPrompt = ref(false)
 
 // TMDB 域名选项
 const tmdbApiDomainOptions = [
@@ -471,6 +483,16 @@ const testAiConfig = async () => {
     aiTestResult.value = response?.code === 200 ? { success: true, message: 'AI 配置测试成功' } : { success: false, message: response?.message || 'AI 配置测试失败' }
   } catch { aiTestResult.value = { success: false, message: '测试 AI 配置失败' } }
   finally { testingAi.value = false; setTimeout(() => aiTestResult.value = null, 3000) }
+}
+
+const resetAiPrompt = async () => {
+  resettingPrompt.value = true
+  try {
+    const response = await authenticatedApiCall('/system/default-ai-prompt')
+    if (response?.code === 200 && response.data) { aiConfig.value.prompt = response.data; showSuccess.value = true; setTimeout(() => showSuccess.value = false, 3000) }
+    else { errorMessage.value = response?.message || '获取默认提示词失败'; setTimeout(() => errorMessage.value = '', 3000) }
+  } catch { errorMessage.value = '获取默认提示词失败'; setTimeout(() => errorMessage.value = '', 3000) }
+  finally { resettingPrompt.value = false }
 }
 
 const toggleApiKeyVisibility = () => showApiKey.value = !showApiKey.value

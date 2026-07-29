@@ -5,14 +5,13 @@ import com.hienao.openlist2strm.dto.media.MediaInfo;
 import com.hienao.openlist2strm.dto.tmdb.TmdbMovieDetail;
 import com.hienao.openlist2strm.dto.tmdb.TmdbSearchResponse;
 import com.hienao.openlist2strm.dto.tmdb.TmdbTvDetail;
-import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.handler.context.FileProcessingContext;
 import com.hienao.openlist2strm.service.AiFileNameRecognitionService;
 import com.hienao.openlist2strm.service.CoverImageService;
 import com.hienao.openlist2strm.service.NfoGeneratorService;
 import com.hienao.openlist2strm.service.SystemConfigService;
 import com.hienao.openlist2strm.service.TmdbApiService;
-import com.hienao.openlist2strm.util.TaskMediaParser;
+import com.hienao.openlist2strm.util.MediaFileParser;
 import com.hienao.openlist2strm.util.TmdbIdExtractor;
 import java.nio.file.Paths;
 import java.util.Collections;
@@ -104,7 +103,8 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     List<String> tvFileRegexps =
         (List<String>) regexConfig.getOrDefault("tvFileRegexps", Collections.emptyList());
 
-    String libraryType = context.getTaskConfig().getLibraryType();
+    // 提取目录路径
+    String directoryPath = extractDirectoryPath(relativePath);
 
     // 检查路径中是否包含 TMDB ID
     Integer tmdbIdFromPath = TmdbIdExtractor.extractTmdbIdFromPath(relativePath);
@@ -113,8 +113,7 @@ public class MediaScrapingHandler implements FileProcessorHandler {
 
     // 解析文件名
     MediaInfo mediaInfo =
-        TaskMediaParser.parse(
-            fileName, relativePath, movieRegexps, tvDirRegexps, tvFileRegexps, libraryType);
+        MediaFileParser.parse(fileName, directoryPath, movieRegexps, tvDirRegexps, tvFileRegexps);
     log.debug("正则解析媒体信息: {}", mediaInfo);
 
     // 如果路径中有 TMDB ID，直接使用
@@ -133,19 +132,18 @@ public class MediaScrapingHandler implements FileProcessorHandler {
 
       if (aiRecognitionEnabled) {
         AiRecognitionResult aiResult =
-            aiFileNameRecognitionService.recognizeFileName(fileName, relativePath, libraryType);
+            aiFileNameRecognitionService.recognizeFileName(fileName, relativePath);
         if (aiResult != null && aiResult.isSuccess()) {
           if (aiResult.isNewFormat()) {
-            mediaInfo = aiResult.toMediaInfo(fileName, libraryType);
+            mediaInfo = aiResult.toMediaInfo(fileName);
           } else if (aiResult.isLegacyFormat()) {
             mediaInfo =
-                TaskMediaParser.parse(
+                MediaFileParser.parse(
                     aiResult.getFilename(),
-                    relativePath,
+                    directoryPath,
                     movieRegexps,
                     tvDirRegexps,
-                    tvFileRegexps,
-                    libraryType);
+                    tvFileRegexps);
           }
           log.info("使用 AI 识别结果重新解析: {}", mediaInfo);
         }
@@ -178,10 +176,7 @@ public class MediaScrapingHandler implements FileProcessorHandler {
       Integer tmdbId,
       MediaInfo mediaInfo) {
 
-    MediaLibraryType libraryType = MediaLibraryType.from(context.getTaskConfig().getLibraryType());
-    boolean isMovie =
-        libraryType == MediaLibraryType.MOVIE
-            || (libraryType == MediaLibraryType.AUTO && !mediaInfo.isTvShow());
+    boolean isMovie = MediaFileParser.isVideoFile(fileName);
 
     try {
       if (isMovie) {
@@ -298,14 +293,26 @@ public class MediaScrapingHandler implements FileProcessorHandler {
 
   private boolean isScrapingEnabled(FileProcessingContext context) {
     Map<String, Object> config = systemConfigService.getScrapingConfig();
-    return Boolean.TRUE.equals(config.getOrDefault("enabled", true))
-        && Boolean.TRUE.equals(context.getTaskConfig().getNeedScrap());
+    return Boolean.TRUE.equals(config.getOrDefault("enabled", true));
   }
 
   private boolean isTmdbConfigured(FileProcessingContext context) {
     Map<String, Object> config = systemConfigService.getTmdbConfig();
     String apiKey = (String) config.getOrDefault("apiKey", "");
     return apiKey != null && !apiKey.trim().isEmpty();
+  }
+
+  private String extractDirectoryPath(String relativePath) {
+    if (relativePath == null || relativePath.isEmpty()) {
+      return "";
+    }
+    try {
+      java.nio.file.Path path = java.nio.file.Paths.get(relativePath);
+      java.nio.file.Path parent = path.getParent();
+      return parent == null ? "" : parent.toString();
+    } catch (Exception e) {
+      return "";
+    }
   }
 
   private String getStrmCompatibleBaseFileName(String fileName) {
