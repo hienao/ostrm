@@ -6,6 +6,8 @@ import com.hienao.openlist2strm.constant.AppConstants;
 import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
 import com.hienao.openlist2strm.util.UrlEncoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Data;
@@ -318,6 +320,90 @@ public class OpenlistApiService {
     } catch (Exception e) {
       log.debug("检查文件存在性失败: {}, 错误: {}", filePath, e.getMessage());
       return false;
+    }
+  }
+
+  /** 重命名 OpenList 中的文件或目录。 */
+  public void renameEntry(OpenlistConfig config, String path, String newName) {
+    if (newName == null
+        || newName.isBlank()
+        || newName.contains("/")
+        || newName.contains("\\")
+        || ".".equals(newName)
+        || "..".equals(newName)) {
+      throw new BusinessException("目标名称不合法");
+    }
+
+    try {
+      String apiUrl = buildApiUrl(config, "api/fs/rename");
+      HttpHeaders headers = mutationHeaders(config);
+      String requestBody =
+          objectMapper.writeValueAsString(
+              java.util.Map.of("path", path, "name", newName, "overwrite", false));
+      apiRateLimiter.acquire(config, "/api/fs/rename");
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              apiUrl, HttpMethod.POST, new HttpEntity<>(requestBody, headers), String.class);
+      assertSuccessfulMutation(response, "重命名");
+    } catch (BusinessException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new BusinessException("OpenList 重命名失败: " + e.getMessage(), e);
+    }
+  }
+
+  /** 将生成的元数据文件上传到 OpenList，已存在时覆盖。 */
+  public void uploadFile(
+      OpenlistConfig config, String filePath, byte[] content, String contentType) {
+    try {
+      String apiUrl = buildApiUrl(config, "api/fs/put");
+      HttpHeaders headers = mutationHeaders(config);
+      headers.setContentType(
+          contentType == null || contentType.isBlank()
+              ? MediaType.APPLICATION_OCTET_STREAM
+              : MediaType.parseMediaType(contentType));
+      headers.set(
+          "File-Path", URLEncoder.encode(filePath, StandardCharsets.UTF_8).replace("+", "%20"));
+      headers.set("As-Task", "false");
+      headers.set("Overwrite", "true");
+      headers.setContentLength(content.length);
+
+      apiRateLimiter.acquire(config, "/api/fs/put");
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              apiUrl, HttpMethod.PUT, new HttpEntity<>(content, headers), String.class);
+      assertSuccessfulMutation(response, "上传");
+    } catch (BusinessException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new BusinessException("OpenList 文件上传失败: " + e.getMessage(), e);
+    }
+  }
+
+  private String buildApiUrl(OpenlistConfig config, String endpoint) {
+    String baseUrl = config.getBaseUrl();
+    return (baseUrl.endsWith("/") ? baseUrl : baseUrl + "/") + endpoint;
+  }
+
+  private HttpHeaders mutationHeaders(OpenlistConfig config) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.set("User-Agent", AppConstants.USER_AGENT);
+    headers.set("Authorization", config.getToken());
+    return headers;
+  }
+
+  private void assertSuccessfulMutation(ResponseEntity<String> response, String operation)
+      throws Exception {
+    if (!response.getStatusCode().is2xxSuccessful()) {
+      throw new BusinessException("OpenList " + operation + "失败，状态码: " + response.getStatusCode());
+    }
+    if (response.getBody() == null || response.getBody().isBlank()) {
+      throw new BusinessException("OpenList " + operation + "返回空响应");
+    }
+    AlistApiResponse result = objectMapper.readValue(response.getBody(), AlistApiResponse.class);
+    if (result.getCode() == null || result.getCode() != 200) {
+      throw new BusinessException("OpenList " + operation + "失败: " + result.getMessage());
     }
   }
 

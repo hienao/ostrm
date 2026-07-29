@@ -31,6 +31,9 @@ public class TaskConfig {
   /** 是否需要刮削：true-是，false-否 */
   private Boolean needScrap;
 
+  /** 媒体库类型：auto/movie/tv/anime */
+  private String libraryType;
+
   /** 重命名正则表达式，为空时表示不需要重命名 */
   private String renameRegex;
 

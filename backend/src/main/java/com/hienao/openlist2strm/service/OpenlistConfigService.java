@@ -130,6 +130,9 @@ public class OpenlistConfigService {
     if (config.getFsApiQpmLimit() == null) {
       config.setFsApiQpmLimit(0);
     }
+    if (config.getFsApiQpsLimit() == null) {
+      config.setFsApiQpsLimit(0);
+    }
 
     log.info("创建OpenList配置 - strmBaseUrl: '{}'", config.getStrmBaseUrl());
     int result = openlistConfigMapper.insert(config);
@@ -161,6 +164,9 @@ public class OpenlistConfigService {
 
     if (config.getFsApiQpmLimit() == null) {
       config.setFsApiQpmLimit(existingConfig.getFsApiQpmLimit());
+    }
+    if (config.getFsApiQpsLimit() == null) {
+      config.setFsApiQpsLimit(existingConfig.getFsApiQpsLimit());
     }
     validateConfig(config);
 
@@ -262,6 +268,10 @@ public class OpenlistConfigService {
     if (config.getFsApiQpmLimit() != null
         && (config.getFsApiQpmLimit() < 0 || config.getFsApiQpmLimit() > 6000)) {
       throw new BusinessException("API 每分钟调用次数必须在0到6000之间");
+    }
+    if (config.getFsApiQpsLimit() != null
+        && (config.getFsApiQpsLimit() < 0 || config.getFsApiQpsLimit() > 1000)) {
+      throw new BusinessException("API 每秒调用次数必须在0到1000之间");
     }
 
     // 验证URL格式
