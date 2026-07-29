@@ -2,6 +2,7 @@ package com.hienao.openlist2strm.dto.task;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Builder;
@@ -34,6 +35,15 @@ public final class ManualScrapingDtos {
   @Data
   public static class PreviewRequest {
     @NotBlank(message = "目录路径不能为空") private String directoryPath;
+
+    /** 用户手动修正的搜索标题；为空时使用自动识别结果。 */
+    private String title;
+
+    /** 用户手动修正的发行年份。 */
+    private String year;
+
+    /** 用户指定后直接读取详情，不再执行标题搜索。 */
+    @Positive(message = "TMDB ID必须大于0") private Integer tmdbId;
   }
 
   @Data
@@ -41,6 +51,10 @@ public final class ManualScrapingDtos {
   public static class Preview {
     private String directoryPath;
     private String mediaType;
+    private boolean matched;
+    private String searchTitle;
+    private String searchYear;
+    private String matchMessage;
     private Integer tmdbId;
     private String title;
     private String originalTitle;

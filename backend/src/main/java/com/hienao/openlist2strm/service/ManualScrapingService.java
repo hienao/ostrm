@@ -7,6 +7,7 @@ import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.DirectoryTree;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteRequest;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteResult;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.Preview;
+import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.PreviewRequest;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.RenameItem;
 import com.hienao.openlist2strm.dto.tmdb.TmdbMovieDetail;
 import com.hienao.openlist2strm.dto.tmdb.TmdbSearchResponse;
@@ -72,9 +73,9 @@ public class ManualScrapingService {
         .build();
   }
 
-  public Preview preview(Long taskId, String directoryPath) {
+  public Preview preview(Long taskId, PreviewRequest request) {
     Context context = loadContext(taskId);
-    String selectedPath = requireTaskPath(context.task(), directoryPath);
+    String selectedPath = requireTaskPath(context.task(), request.getDirectoryPath());
     validateSelectableDirectory(context.libraryType(), selectedPath);
     List<OpenlistApiService.OpenlistFile> videoFiles =
         findVideoFiles(context.openlistConfig(), selectedPath);
@@ -83,15 +84,58 @@ public class ManualScrapingService {
     }
     validateMediaDirectory(context.libraryType(), selectedPath, videoFiles);
 
-    OpenlistApiService.OpenlistFile representative = videoFiles.get(0);
-    MediaInfo mediaInfo = recognize(context, representative);
-    Match match = findMatch(context.libraryType(), mediaInfo, selectedPath);
+    String mediaType = context.libraryType() == MediaLibraryType.MOVIE ? "movie" : "tv";
+    String searchTitle = trimToNull(request.getTitle());
+    String searchYear = trimToNull(request.getYear());
+    Match match;
+
+    if (request.getTmdbId() != null) {
+      match = loadMatch(mediaType, request.getTmdbId());
+    } else {
+      MediaInfo mediaInfo;
+      if (searchTitle != null) {
+        mediaInfo =
+            new MediaInfo()
+                .setType(
+                    context.libraryType() == MediaLibraryType.MOVIE
+                        ? MediaInfo.MediaType.MOVIE
+                        : MediaInfo.MediaType.TV_SHOW)
+                .setTitle(searchTitle)
+                .setYear(searchYear)
+                .setHasYear(searchYear != null)
+                .setConfidence(100);
+      } else {
+        mediaInfo = recognize(context, videoFiles.get(0));
+        searchTitle = mediaInfo.getSearchQuery();
+        searchYear = searchYear != null ? searchYear : trimToNull(mediaInfo.getYear());
+        if (searchYear != null) {
+          mediaInfo.setYear(searchYear).setHasYear(true);
+        }
+      }
+      match = findMatch(context.libraryType(), mediaInfo, selectedPath);
+      if (match == null) {
+        return Preview.builder()
+            .directoryPath(selectedPath)
+            .mediaType(mediaType)
+            .matched(false)
+            .searchTitle(searchTitle)
+            .searchYear(searchYear)
+            .matchMessage("TMDB 未找到匹配结果，请修改标题、年份或直接输入 TMDB ID")
+            .videoFileCount(videoFiles.size())
+            .build();
+      }
+    }
+
     RenamePlan renamePlan =
-        buildRenamePlan(context, selectedPath, videoFiles, match.title(), match.year());
+        buildRenamePlan(
+            context, selectedPath, videoFiles, match.title(), match.year(), match.tmdbId());
 
     return Preview.builder()
         .directoryPath(selectedPath)
         .mediaType(match.mediaType())
+        .matched(true)
+        .searchTitle(match.title())
+        .searchYear(match.year())
         .tmdbId(match.tmdbId())
         .title(match.title())
         .originalTitle(match.originalTitle())
@@ -106,6 +150,12 @@ public class ManualScrapingService {
         .generatedFiles(metadataNames(match, renamePlan, false))
         .renamedGeneratedFiles(metadataNames(match, renamePlan, true))
         .build();
+  }
+
+  public Preview preview(Long taskId, String directoryPath) {
+    PreviewRequest request = new PreviewRequest();
+    request.setDirectoryPath(directoryPath);
+    return preview(taskId, request);
   }
 
   public ExecuteResult execute(Long taskId, ExecuteRequest request) {
@@ -123,7 +173,8 @@ public class ManualScrapingService {
 
     Match match = loadMatch(request.getMediaType(), request.getTmdbId());
     RenamePlan renamePlan =
-        buildRenamePlan(context, selectedPath, videoFiles, match.title(), match.year());
+        buildRenamePlan(
+            context, selectedPath, videoFiles, match.title(), match.year(), match.tmdbId());
     String finalDirectoryPath = selectedPath;
     int renamedFileCount = 0;
 
@@ -234,7 +285,7 @@ public class ManualScrapingService {
             ? tmdbApiService.searchMovies(mediaInfo.getSearchQuery(), mediaInfo.getYear())
             : tmdbApiService.searchTvShows(mediaInfo.getSearchQuery(), mediaInfo.getYear());
     if (response.getResults() == null || response.getResults().isEmpty()) {
-      throw new BusinessException("TMDB 未找到匹配结果，请检查目录和媒体文件命名");
+      return null;
     }
     TmdbSearchResponse.TmdbSearchResult best =
         selectBestMatch(response.getResults(), mediaInfo.getYear());
@@ -295,9 +346,15 @@ public class ManualScrapingService {
       String selectedPath,
       List<OpenlistApiService.OpenlistFile> videoFiles,
       String title,
-      String year) {
+      String year,
+      Integer tmdbId) {
     String directoryName =
-        safeName(title + (year == null || year.isBlank() ? "" : " (" + year + ")"));
+        safeName(
+            title
+                + (year == null || year.isBlank() ? "" : " (" + year + ")")
+                + " {tmdbid-"
+                + tmdbId
+                + "}");
     List<RenameItem> files = new ArrayList<>();
     Map<String, Integer> usedNames = new LinkedHashMap<>();
 
@@ -334,6 +391,13 @@ public class ManualScrapingService {
               .build());
     }
     return new RenamePlan(directoryName, files);
+  }
+
+  private String trimToNull(String value) {
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    return value.trim();
   }
 
   private void validateRenameCollisions(
