@@ -3,6 +3,7 @@ package com.hienao.openlist2strm.dto.task;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Builder;
@@ -96,5 +97,28 @@ public final class ManualScrapingDtos {
     private int renamedFileCount;
     @Builder.Default private List<String> uploadedFiles = new ArrayList<>();
     private String message;
+  }
+
+  @Data
+  @Builder
+  public static class JobView {
+    private Long id;
+    private Long taskId;
+    private String directoryPath;
+    private String finalDirectoryPath;
+    private String mediaType;
+    private Integer tmdbId;
+    private boolean renameMedia;
+    private String status;
+    private String stage;
+    private int progress;
+    private String message;
+    private String errorMessage;
+    private int renamedFileCount;
+    @Builder.Default private List<String> uploadedFiles = new ArrayList<>();
+    private LocalDateTime createdAt;
+    private LocalDateTime startedAt;
+    private LocalDateTime completedAt;
+    private LocalDateTime updatedAt;
   }
 }
