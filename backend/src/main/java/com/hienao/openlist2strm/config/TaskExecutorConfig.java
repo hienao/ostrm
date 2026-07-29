@@ -49,4 +49,19 @@ public class TaskExecutorConfig {
 
     return executor;
   }
+
+  /** 手动刮削作业允许不同任务并行，同一任务由数据库唯一索引互斥。 */
+  @Bean("manualScrapingExecutor")
+  public Executor manualScrapingExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(2);
+    executor.setMaxPoolSize(4);
+    executor.setQueueCapacity(100);
+    executor.setThreadNamePrefix("manual-scraping-");
+    executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+    executor.setWaitForTasksToCompleteOnShutdown(true);
+    executor.setAwaitTerminationSeconds(60);
+    executor.initialize();
+    return executor;
+  }
 }

@@ -12,6 +12,8 @@ import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.RenameItem;
 import com.hienao.openlist2strm.dto.tmdb.TmdbMovieDetail;
 import com.hienao.openlist2strm.dto.tmdb.TmdbSearchResponse;
 import com.hienao.openlist2strm.dto.tmdb.TmdbTvDetail;
+import com.hienao.openlist2strm.entity.ManualScrapingJob;
+import com.hienao.openlist2strm.entity.ManualScrapingJobStage;
 import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
@@ -24,12 +26,16 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** 提供目录选择、媒体识别预览以及确认后写回 OpenList 的手动刮削流程。 */
@@ -47,6 +53,9 @@ public class ManualScrapingService {
   private final TmdbApiService tmdbApiService;
   private final NfoGeneratorService nfoGeneratorService;
   private final CoverImageService coverImageService;
+
+  @Value("${app.paths.data}")
+  private String applicationDataPath;
 
   public DirectoryTree getDirectoryTree(Long taskId) {
     Context context = loadContext(taskId);
@@ -159,10 +168,69 @@ public class ManualScrapingService {
   }
 
   public ExecuteResult execute(Long taskId, ExecuteRequest request) {
+    return executeInternal(taskId, request, ManualScrapingJobStage.PREPARING, null, 0, null);
+  }
+
+  public ExecuteResult executeJob(ManualScrapingJob job, JobProgressListener listener) {
+    ExecuteRequest request = new ExecuteRequest();
+    request.setDirectoryPath(job.getDirectoryPath());
+    request.setMediaType(job.getMediaType());
+    request.setTmdbId(job.getTmdbId());
+    request.setRenameMedia(Boolean.TRUE.equals(job.getRenameMedia()));
+    Path workspace = Paths.get(applicationDataPath, "manual-scraping", String.valueOf(job.getId()));
+    return executeInternal(
+        job.getTaskId(),
+        request,
+        job.stageValue(),
+        job.getFinalDirectoryPath(),
+        job.getRenamedFileCount() == null ? 0 : job.getRenamedFileCount(),
+        workspace,
+        listener);
+  }
+
+  private ExecuteResult executeInternal(
+      Long taskId,
+      ExecuteRequest request,
+      ManualScrapingJobStage resumeStage,
+      String checkpointDirectoryPath,
+      int checkpointRenamedFileCount,
+      Path persistentWorkspace) {
+    return executeInternal(
+        taskId,
+        request,
+        resumeStage,
+        checkpointDirectoryPath,
+        checkpointRenamedFileCount,
+        persistentWorkspace,
+        (stage, progress, message, finalPath, renamedCount) -> {});
+  }
+
+  private ExecuteResult executeInternal(
+      Long taskId,
+      ExecuteRequest request,
+      ManualScrapingJobStage resumeStage,
+      String checkpointDirectoryPath,
+      int checkpointRenamedFileCount,
+      Path persistentWorkspace,
+      JobProgressListener listener) {
     Context context = loadContext(taskId);
-    String selectedPath = requireTaskPath(context.task(), request.getDirectoryPath());
-    validateSelectableDirectory(context.libraryType(), selectedPath);
+    String originalPath = requireTaskPath(context.task(), request.getDirectoryPath());
+    listener.checkpoint(
+        resumeStage,
+        Math.max(5, stageProgress(resumeStage)),
+        resumeStage == ManualScrapingJobStage.PREPARING ? "正在校验目录并读取 TMDB 信息" : "正在恢复上次中断的刮削作业",
+        checkpointDirectoryPath,
+        checkpointRenamedFileCount);
     validateRequestedType(context.libraryType(), request.getMediaType());
+    Match match = loadMatch(request.getMediaType(), request.getTmdbId());
+    String expectedDirectoryName = buildDirectoryName(match.title(), match.year(), match.tmdbId());
+    String selectedPath =
+        resolveExecutionPath(
+            context,
+            originalPath,
+            checkpointDirectoryPath,
+            request.isRenameMedia() ? join(parentPath(originalPath), expectedDirectoryName) : null);
+    validateSelectableDirectory(context.libraryType(), selectedPath);
 
     List<OpenlistApiService.OpenlistFile> videoFiles =
         findVideoFiles(context.openlistConfig(), selectedPath);
@@ -171,14 +239,19 @@ public class ManualScrapingService {
     }
     validateMediaDirectory(context.libraryType(), selectedPath, videoFiles);
 
-    Match match = loadMatch(request.getMediaType(), request.getTmdbId());
     RenamePlan renamePlan =
         buildRenamePlan(
             context, selectedPath, videoFiles, match.title(), match.year(), match.tmdbId());
     String finalDirectoryPath = selectedPath;
-    int renamedFileCount = 0;
+    int renamedFileCount = checkpointRenamedFileCount;
 
-    if (request.isRenameMedia()) {
+    if (request.isRenameMedia() && !resumeStage.isAtLeast(ManualScrapingJobStage.GENERATING)) {
+      listener.checkpoint(
+          ManualScrapingJobStage.RENAMING,
+          15,
+          "正在重命名媒体目录和文件",
+          finalDirectoryPath,
+          renamedFileCount);
       if (normalizePath(context.task().getPath()).equals(selectedPath)) {
         throw new BusinessException("不能重命名任务根目录，请选择根目录下的媒体目录");
       }
@@ -187,8 +260,15 @@ public class ManualScrapingService {
         openlistApiService.renameEntry(
             context.openlistConfig(), selectedPath, renamePlan.directoryName());
         finalDirectoryPath = join(parentPath(selectedPath), renamePlan.directoryName());
+        listener.checkpoint(
+            ManualScrapingJobStage.RENAMING,
+            25,
+            "媒体目录已重命名，正在处理媒体文件",
+            finalDirectoryPath,
+            renamedFileCount);
       }
-      for (RenameItem item : renamePlan.files()) {
+      for (int index = 0; index < renamePlan.files().size(); index++) {
+        RenameItem item = renamePlan.files().get(index);
         if (item.getSourceName().equals(item.getTargetName())) {
           continue;
         }
@@ -202,18 +282,81 @@ public class ManualScrapingService {
             join(currentParent, item.getSourceName()),
             item.getTargetName());
         renamedFileCount++;
+        int renameProgress =
+            25 + (int) Math.round((index + 1) * 20.0 / Math.max(1, renamePlan.files().size()));
+        listener.checkpoint(
+            ManualScrapingJobStage.RENAMING,
+            renameProgress,
+            "已重命名 " + renamedFileCount + " 个媒体文件",
+            finalDirectoryPath,
+            renamedFileCount);
       }
     }
 
-    List<String> uploadedFiles =
-        generateAndUploadMetadata(
-            context, match, renamePlan, finalDirectoryPath, request.isRenameMedia());
-    return ExecuteResult.builder()
-        .finalDirectoryPath(finalDirectoryPath)
-        .renamedFileCount(renamedFileCount)
-        .uploadedFiles(uploadedFiles)
-        .message("手动刮削完成，已上传 " + uploadedFiles.size() + " 个元数据文件")
-        .build();
+    if (checkpointDirectoryPath != null && !checkpointDirectoryPath.isBlank()) {
+      finalDirectoryPath = selectedPath;
+    }
+
+    Path workspace = persistentWorkspace;
+    boolean temporaryWorkspace = workspace == null;
+    try {
+      if (temporaryWorkspace) {
+        workspace = Files.createTempDirectory("ostrm-manual-scraping-");
+      } else {
+        Files.createDirectories(workspace);
+      }
+
+      List<GeneratedFile> generated;
+      if (resumeStage.isAtLeast(ManualScrapingJobStage.UPLOADING) && hasGeneratedFiles(workspace)) {
+        generated = loadGeneratedFiles(workspace);
+      } else {
+        listener.checkpoint(
+            ManualScrapingJobStage.GENERATING,
+            50,
+            "正在生成 NFO 并下载图片",
+            finalDirectoryPath,
+            renamedFileCount);
+        clearDirectoryContents(workspace);
+        generated =
+            generateMetadata(context, match, renamePlan, request.isRenameMedia(), workspace);
+      }
+
+      listener.checkpoint(
+          ManualScrapingJobStage.UPLOADING,
+          75,
+          "正在上传元数据到 OpenList",
+          finalDirectoryPath,
+          renamedFileCount);
+      String uploadDirectoryPath = finalDirectoryPath;
+      int completedRenameCount = renamedFileCount;
+      List<String> uploadedFiles =
+          uploadMetadata(
+              context,
+              uploadDirectoryPath,
+              generated,
+              (uploaded, total) ->
+                  listener.checkpoint(
+                      ManualScrapingJobStage.UPLOADING,
+                      75 + (int) Math.round(uploaded * 20.0 / Math.max(1, total)),
+                      "已上传 " + uploaded + "/" + total + " 个元数据文件",
+                      uploadDirectoryPath,
+                      completedRenameCount));
+      listener.checkpoint(
+          ManualScrapingJobStage.COMPLETED, 100, "手动刮削完成", finalDirectoryPath, renamedFileCount);
+      deleteTempDirectory(workspace);
+      return ExecuteResult.builder()
+          .finalDirectoryPath(finalDirectoryPath)
+          .renamedFileCount(renamedFileCount)
+          .uploadedFiles(uploadedFiles)
+          .message("手动刮削完成，已上传 " + uploadedFiles.size() + " 个元数据文件")
+          .build();
+    } catch (IOException e) {
+      throw new BusinessException("生成刮削文件失败: " + e.getMessage(), e);
+    } finally {
+      if (temporaryWorkspace) {
+        deleteTempDirectory(workspace);
+      }
+    }
   }
 
   private Context loadContext(Long taskId) {
@@ -348,15 +491,12 @@ public class ManualScrapingService {
       String title,
       String year,
       Integer tmdbId) {
-    String directoryName =
-        safeName(
-            title
-                + (year == null || year.isBlank() ? "" : " (" + year + ")")
-                + " {tmdbid-"
-                + tmdbId
-                + "}");
+    String directoryName = buildDirectoryName(title, year, tmdbId);
     List<RenameItem> files = new ArrayList<>();
-    Map<String, Integer> usedNames = new LinkedHashMap<>();
+    List<String> targetBases = new ArrayList<>();
+    List<String> extensions = new ArrayList<>();
+    Set<String> usedTargets = new HashSet<>();
+    Map<String, String> retainedTargets = new LinkedHashMap<>();
 
     for (OpenlistApiService.OpenlistFile file : videoFiles) {
       String extension = extension(file.getName());
@@ -377,20 +517,65 @@ public class ManualScrapingService {
                 ? stripExtension(file.getName())
                 : safeName(title + " - " + episode.getSeasonEpisodeString());
       }
-      String parent = parentPath(file.getPath());
-      String uniquenessKey = parent + "/" + targetBase.toLowerCase(Locale.ROOT) + extension;
-      int duplicate = usedNames.merge(uniquenessKey, 1, Integer::sum);
-      if (duplicate > 1) {
-        targetBase += " - " + String.format("%02d", duplicate);
+      targetBases.add(targetBase);
+      extensions.add(extension);
+
+      if (isGeneratedTargetName(file.getName(), targetBase, extension)) {
+        retainedTargets.put(file.getPath(), file.getName());
+        usedTargets.add(targetKey(parentPath(file.getPath()), file.getName()));
       }
+    }
+
+    for (int index = 0; index < videoFiles.size(); index++) {
+      OpenlistApiService.OpenlistFile file = videoFiles.get(index);
+      String retainedTarget = retainedTargets.get(file.getPath());
+      if (retainedTarget != null) {
+        files.add(
+            RenameItem.builder()
+                .sourcePath(file.getPath())
+                .sourceName(file.getName())
+                .targetName(retainedTarget)
+                .build());
+        continue;
+      }
+
+      String targetBase = targetBases.get(index);
+      String extension = extensions.get(index);
+      String parent = parentPath(file.getPath());
+      String targetName = targetBase + extension;
+      int duplicate = 1;
+      while (usedTargets.contains(targetKey(parent, targetName))) {
+        duplicate++;
+        targetName = targetBase + " - " + String.format("%02d", duplicate) + extension;
+      }
+      usedTargets.add(targetKey(parent, targetName));
       files.add(
           RenameItem.builder()
               .sourcePath(file.getPath())
               .sourceName(file.getName())
-              .targetName(targetBase + extension)
+              .targetName(targetName)
               .build());
     }
     return new RenamePlan(directoryName, files);
+  }
+
+  private boolean isGeneratedTargetName(String currentName, String targetBase, String extension) {
+    String currentBase = stripExtension(currentName);
+    return currentName.equals(targetBase + extension)
+        || currentBase.matches(Pattern.quote(targetBase) + " - \\d{2}");
+  }
+
+  private String targetKey(String parent, String fileName) {
+    return (parent + "/" + fileName).toLowerCase(Locale.ROOT);
+  }
+
+  private String buildDirectoryName(String title, String year, Integer tmdbId) {
+    return safeName(
+        title
+            + (year == null || year.isBlank() ? "" : " (" + year + ")")
+            + " {tmdbid-"
+            + tmdbId
+            + "}");
   }
 
   private String trimToNull(String value) {
@@ -433,76 +618,145 @@ public class ManualScrapingService {
     }
   }
 
-  private List<String> generateAndUploadMetadata(
-      Context context,
-      Match match,
-      RenamePlan renamePlan,
-      String directoryPath,
-      boolean renamedMedia) {
-    Path tempDirectory = null;
-    try {
-      tempDirectory = Files.createTempDirectory("ostrm-manual-scraping-");
-      MediaInfo mediaInfo =
-          new MediaInfo()
-              .setType(
-                  "movie".equals(match.mediaType())
-                      ? MediaInfo.MediaType.MOVIE
-                      : MediaInfo.MediaType.TV_SHOW)
-              .setTitle(match.title())
-              .setYear(match.year())
-              .setHasYear(match.year() != null);
-      List<GeneratedFile> generated = new ArrayList<>();
+  private List<GeneratedFile> generateMetadata(
+      Context context, Match match, RenamePlan renamePlan, boolean renamedMedia, Path workspace) {
+    MediaInfo mediaInfo =
+        new MediaInfo()
+            .setType(
+                "movie".equals(match.mediaType())
+                    ? MediaInfo.MediaType.MOVIE
+                    : MediaInfo.MediaType.TV_SHOW)
+            .setTitle(match.title())
+            .setYear(match.year())
+            .setHasYear(match.year() != null);
+    List<GeneratedFile> generated = new ArrayList<>();
 
-      if ("movie".equals(match.mediaType())) {
-        String baseName =
-            renamePlan.files().isEmpty()
-                ? renamePlan.directoryName()
-                : stripExtension(
-                    renamedMedia
-                        ? renamePlan.files().get(0).getTargetName()
-                        : renamePlan.files().get(0).getSourceName());
-        Path nfo = tempDirectory.resolve(baseName + ".nfo");
-        nfoGeneratorService.generateMovieNfo(match.movieDetail(), mediaInfo, nfo.toString());
-        generated.add(new GeneratedFile(nfo, baseName + ".nfo", "application/xml"));
-        addImage(
-            generated,
-            coverImageService.downloadPoster(match.posterUrl(), tempDirectory.toString(), baseName),
-            baseName + "-poster.jpg");
-        addImage(
-            generated,
-            coverImageService.downloadBackdrop(
-                match.backdropUrl(), tempDirectory.toString(), baseName),
-            baseName + "-backdrop.jpg");
-      } else {
-        Path nfo = tempDirectory.resolve("tvshow.nfo");
-        nfoGeneratorService.generateTvShowNfo(match.tvDetail(), mediaInfo, nfo.toString());
-        generated.add(new GeneratedFile(nfo, "tvshow.nfo", "application/xml"));
-        addImage(
-            generated,
-            coverImageService.downloadPoster(match.posterUrl(), tempDirectory.toString(), "manual"),
-            "poster.jpg");
-        addImage(
-            generated,
-            coverImageService.downloadBackdrop(
-                match.backdropUrl(), tempDirectory.toString(), "manual"),
-            "fanart.jpg");
-      }
-
-      List<String> uploaded = new ArrayList<>();
-      for (GeneratedFile file : generated) {
-        openlistApiService.uploadFile(
-            context.openlistConfig(),
-            join(directoryPath, file.remoteName()),
-            Files.readAllBytes(file.localPath()),
-            file.contentType());
-        uploaded.add(file.remoteName());
-      }
-      return uploaded;
-    } catch (IOException e) {
-      throw new BusinessException("生成刮削文件失败: " + e.getMessage(), e);
-    } finally {
-      deleteTempDirectory(tempDirectory);
+    if ("movie".equals(match.mediaType())) {
+      String baseName =
+          renamePlan.files().isEmpty()
+              ? renamePlan.directoryName()
+              : stripExtension(
+                  renamedMedia
+                      ? renamePlan.files().get(0).getTargetName()
+                      : renamePlan.files().get(0).getSourceName());
+      Path nfo = workspace.resolve(baseName + ".nfo");
+      nfoGeneratorService.generateMovieNfo(match.movieDetail(), mediaInfo, nfo.toString());
+      generated.add(new GeneratedFile(nfo, baseName + ".nfo", "application/xml"));
+      addImage(
+          generated,
+          coverImageService.downloadPoster(match.posterUrl(), workspace.toString(), baseName),
+          baseName + "-poster.jpg");
+      addImage(
+          generated,
+          coverImageService.downloadBackdrop(match.backdropUrl(), workspace.toString(), baseName),
+          baseName + "-backdrop.jpg");
+    } else {
+      Path nfo = workspace.resolve("tvshow.nfo");
+      nfoGeneratorService.generateTvShowNfo(match.tvDetail(), mediaInfo, nfo.toString());
+      generated.add(new GeneratedFile(nfo, "tvshow.nfo", "application/xml"));
+      addImage(
+          generated,
+          coverImageService.downloadPoster(match.posterUrl(), workspace.toString(), "manual"),
+          "poster.jpg");
+      addImage(
+          generated,
+          coverImageService.downloadBackdrop(match.backdropUrl(), workspace.toString(), "manual"),
+          "fanart.jpg");
     }
+    return generated;
+  }
+
+  private List<String> uploadMetadata(
+      Context context,
+      String directoryPath,
+      List<GeneratedFile> generated,
+      UploadProgressListener listener)
+      throws IOException {
+    List<String> uploaded = new ArrayList<>();
+    for (GeneratedFile file : generated) {
+      openlistApiService.uploadFile(
+          context.openlistConfig(),
+          join(directoryPath, file.remoteName()),
+          Files.readAllBytes(file.localPath()),
+          file.contentType());
+      uploaded.add(file.remoteName());
+      listener.uploaded(uploaded.size(), generated.size());
+    }
+    return uploaded;
+  }
+
+  private List<GeneratedFile> loadGeneratedFiles(Path workspace) throws IOException {
+    try (var paths = Files.list(workspace)) {
+      return paths
+          .filter(Files::isRegularFile)
+          .sorted()
+          .map(
+              path ->
+                  new GeneratedFile(
+                      path,
+                      path.getFileName().toString(),
+                      path.getFileName().toString().endsWith(".nfo")
+                          ? "application/xml"
+                          : "image/jpeg"))
+          .toList();
+    }
+  }
+
+  private boolean hasGeneratedFiles(Path workspace) throws IOException {
+    if (!Files.isDirectory(workspace)) {
+      return false;
+    }
+    try (var paths = Files.list(workspace)) {
+      return paths.anyMatch(Files::isRegularFile);
+    }
+  }
+
+  private void clearDirectoryContents(Path directory) throws IOException {
+    if (!Files.exists(directory)) {
+      Files.createDirectories(directory);
+      return;
+    }
+    try (var paths = Files.walk(directory)) {
+      paths
+          .filter(path -> !directory.equals(path))
+          .sorted(Comparator.reverseOrder())
+          .forEach(this::deleteQuietly);
+    }
+  }
+
+  private String resolveExecutionPath(
+      Context context, String originalPath, String checkpointPath, String expectedPath) {
+    if (checkpointPath != null
+        && !checkpointPath.isBlank()
+        && directoryExists(context.openlistConfig(), checkpointPath)) {
+      return normalizePath(checkpointPath);
+    }
+    if (directoryExists(context.openlistConfig(), originalPath)) {
+      return originalPath;
+    }
+    if (expectedPath != null && directoryExists(context.openlistConfig(), expectedPath)) {
+      return normalizePath(expectedPath);
+    }
+    throw new BusinessException("原目录和重命名后的目录均不存在，无法继续刮削");
+  }
+
+  private boolean directoryExists(OpenlistConfig config, String path) {
+    String normalized = normalizePath(path);
+    return openlistApiService.getDirectoryContents(config, parentPath(normalized)).stream()
+        .anyMatch(
+            entry ->
+                "folder".equals(entry.getType())
+                    && lastSegment(normalized).equals(entry.getName()));
+  }
+
+  private int stageProgress(ManualScrapingJobStage stage) {
+    return switch (stage) {
+      case PREPARING -> 5;
+      case RENAMING -> 15;
+      case GENERATING -> 50;
+      case UPLOADING -> 75;
+      case COMPLETED -> 100;
+    };
   }
 
   private void addImage(List<GeneratedFile> files, String localPath, String remoteName) {
@@ -733,6 +987,21 @@ public class ManualScrapingService {
   private record RenamePlan(String directoryName, List<RenameItem> files) {}
 
   private record GeneratedFile(Path localPath, String remoteName, String contentType) {}
+
+  @FunctionalInterface
+  public interface JobProgressListener {
+    void checkpoint(
+        ManualScrapingJobStage stage,
+        int progress,
+        String message,
+        String finalDirectoryPath,
+        int renamedFileCount);
+  }
+
+  @FunctionalInterface
+  private interface UploadProgressListener {
+    void uploaded(int uploaded, int total);
+  }
 
   private static final class MutableDirectory {
     private final String name;

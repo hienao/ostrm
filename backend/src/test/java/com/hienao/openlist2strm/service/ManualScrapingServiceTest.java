@@ -126,6 +126,34 @@ class ManualScrapingServiceTest {
         preview.getProposedFileRenames().get(0).getTargetName());
   }
 
+  @Test
+  void keepsAlreadyRenamedFileReservedWhenRecoveringMultiFileMovie() {
+    stubMovieTask();
+    OpenlistConfig config = openlistConfigService.getById(3L);
+    String directory = "/movies/Film (2026) {tmdbid-123}";
+    String targetBase = "Film (2026) {tmdbid-123}";
+    when(openlistApiService.getAllFilesRecursively(config, directory))
+        .thenReturn(
+            List.of(
+                entry("B.mkv", directory + "/B.mkv", "file"),
+                entry(targetBase + ".mkv", directory + "/" + targetBase + ".mkv", "file")));
+    when(strmFileService.isVideoFile(anyString())).thenReturn(true);
+    TmdbMovieDetail detail = new TmdbMovieDetail();
+    detail.setId(123);
+    detail.setTitle("Film");
+    detail.setReleaseDate("2026-01-01");
+    when(tmdbApiService.getMovieDetail(123)).thenReturn(detail);
+
+    PreviewRequest request = new PreviewRequest();
+    request.setDirectoryPath(directory);
+    request.setTmdbId(123);
+
+    Preview preview = service.preview(7L, request);
+
+    assertEquals(targetBase + " - 02.mkv", preview.getProposedFileRenames().get(0).getTargetName());
+    assertEquals(targetBase + ".mkv", preview.getProposedFileRenames().get(1).getTargetName());
+  }
+
   private void stubMovieTask() {
     TaskConfig task =
         new TaskConfig()
