@@ -1,18 +1,10 @@
 package com.hienao.openlist2strm.controller;
 
 import com.hienao.openlist2strm.dto.ApiResponse;
-import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.DirectoryTree;
-import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteRequest;
-import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteResult;
-import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.Preview;
-import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.PreviewRequest;
 import com.hienao.openlist2strm.dto.task.TaskConfigDto;
-import com.hienao.openlist2strm.dto.task.TaskStructureCheckResult;
 import com.hienao.openlist2strm.entity.TaskConfig;
-import com.hienao.openlist2strm.service.ManualScrapingService;
 import com.hienao.openlist2strm.service.TaskConfigService;
 import com.hienao.openlist2strm.service.TaskExecutionService;
-import com.hienao.openlist2strm.service.TaskStructureCheckService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -43,8 +35,6 @@ public class TaskConfigController {
 
   private final TaskConfigService taskConfigService;
   private final TaskExecutionService taskExecutionService;
-  private final TaskStructureCheckService taskStructureCheckService;
-  private final ManualScrapingService manualScrapingService;
 
   /** 查询所有配置 */
   @GetMapping
@@ -186,40 +176,6 @@ public class TaskConfigController {
     Boolean isIncremental = request != null ? request.getIsIncremental() : null;
     taskExecutionService.submitTask(id, isIncremental);
     return ResponseEntity.ok(ApiResponse.success("任务已提交执行"));
-  }
-
-  /** 检查任务目录结构 */
-  @PostMapping("/{id}/structure-check")
-  @Operation(summary = "检查任务目录结构", description = "递归扫描任务目录，并以文件树返回目录层级不符合要求的视频文件")
-  public ResponseEntity<ApiResponse<TaskStructureCheckResult>> checkTaskStructure(
-      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id) {
-    return ResponseEntity.ok(ApiResponse.success(taskStructureCheckService.check(id)));
-  }
-
-  /** 获取手动刮削目录树 */
-  @GetMapping("/{id}/manual-scraping/tree")
-  @Operation(summary = "获取手动刮削目录树", description = "递归返回任务目录下的所有文件夹及其媒体文件数量")
-  public ResponseEntity<ApiResponse<DirectoryTree>> getManualScrapingTree(
-      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id) {
-    return ResponseEntity.ok(ApiResponse.success(manualScrapingService.getDirectoryTree(id)));
-  }
-
-  /** 识别所选目录并返回刮削预览 */
-  @PostMapping("/{id}/manual-scraping/preview")
-  @Operation(summary = "预览手动刮削", description = "识别所选媒体目录并返回TMDB信息、重命名和上传文件预览")
-  public ResponseEntity<ApiResponse<Preview>> previewManualScraping(
-      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
-      @Valid @RequestBody PreviewRequest request) {
-    return ResponseEntity.ok(ApiResponse.success(manualScrapingService.preview(id, request)));
-  }
-
-  /** 确认执行手动刮削 */
-  @PostMapping("/{id}/manual-scraping/execute")
-  @Operation(summary = "执行手动刮削", description = "按预览确认结果重命名媒体，并将NFO和图片上传回OpenList")
-  public ResponseEntity<ApiResponse<ExecuteResult>> executeManualScraping(
-      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
-      @Valid @RequestBody ExecuteRequest request) {
-    return ResponseEntity.ok(ApiResponse.success(manualScrapingService.execute(id, request)));
   }
 
   /** 更新状态请求体 */

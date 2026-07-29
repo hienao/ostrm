@@ -52,7 +52,4 @@ public class OpenlistConfigDto {
 
   /** OpenList 文件系统 API 每分钟最大调用次数：0-不限制 */
   @Min(value = 0, message = "API 每分钟调用次数不能小于0") @Max(value = 6000, message = "API 每分钟调用次数不能大于6000") private Integer fsApiQpmLimit;
-
-  /** OpenList 文件系统 API 每秒最大调用次数：0-不限制 */
-  @Min(value = 0, message = "API 每秒调用次数不能小于0") @Max(value = 1000, message = "API 每秒调用次数不能大于1000") private Integer fsApiQpsLimit;
 }

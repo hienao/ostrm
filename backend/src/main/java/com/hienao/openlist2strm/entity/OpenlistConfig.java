@@ -48,7 +48,4 @@ public class OpenlistConfig {
 
   /** OpenList 文件系统 API 每分钟最大调用次数：0-不限制 */
   private Integer fsApiQpmLimit;
-
-  /** OpenList 文件系统 API 每秒最大调用次数：0-不限制 */
-  private Integer fsApiQpsLimit;
 }

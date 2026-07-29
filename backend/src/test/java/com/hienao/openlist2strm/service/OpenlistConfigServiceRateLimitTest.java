@@ -21,7 +21,6 @@ class OpenlistConfigServiceRateLimitTest {
     service.createConfig(config);
 
     assertEquals(0, config.getFsApiQpmLimit());
-    assertEquals(0, config.getFsApiQpsLimit());
     verify(mapper).insert(config);
   }
 
@@ -29,7 +28,7 @@ class OpenlistConfigServiceRateLimitTest {
   void updatePreservesLimitWhenOlderClientOmitsField() {
     OpenlistConfigMapper mapper = mock(OpenlistConfigMapper.class);
     OpenlistConfigService service = new OpenlistConfigService(mapper);
-    OpenlistConfig existing = validConfig().setId(1L).setFsApiQpmLimit(30).setFsApiQpsLimit(3);
+    OpenlistConfig existing = validConfig().setId(1L).setFsApiQpmLimit(30);
     OpenlistConfig update = validConfig().setId(1L);
     when(mapper.selectById(1L)).thenReturn(existing);
     when(mapper.updateById(update)).thenReturn(1);
@@ -37,7 +36,6 @@ class OpenlistConfigServiceRateLimitTest {
     service.updateConfig(update);
 
     assertEquals(30, update.getFsApiQpmLimit());
-    assertEquals(3, update.getFsApiQpsLimit());
     verify(mapper).updateById(update);
   }
 

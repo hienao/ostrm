@@ -154,10 +154,9 @@
 
             <div class="bg-white/5 rounded-lg p-3 border border-white/6">
               <label class="text-xs font-medium text-white/40 uppercase tracking-wider">文件 API 限速</label>
-              <div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-white/80">
-                <span>QPS：{{ config.fsApiQpsLimit > 0 ? `${config.fsApiQpsLimit} 次/秒` : '不限制' }}</span>
-                <span>QPM：{{ config.fsApiQpmLimit > 0 ? `${config.fsApiQpmLimit} 次/分钟` : '不限制' }}</span>
-              </div>
+              <p class="mt-1 text-sm text-white/80">
+                {{ config.fsApiQpmLimit > 0 ? `${config.fsApiQpmLimit} 次/分钟` : '不限制' }}
+              </p>
             </div>
 
             <div v-if="config.strmBaseUrl" class="bg-blue-500/5 rounded-lg p-3 border border-blue-500/10">
@@ -246,13 +245,7 @@
               <div>
                 <label for="fsApiQpmLimit" class="block text-sm font-medium text-white/70 mb-2">文件 API 每分钟最大调用次数</label>
                 <input id="fsApiQpmLimit" v-model.number="configForm.fsApiQpmLimit" type="number" min="0" max="6000" required class="input-field" :disabled="formLoading" />
-                <p class="mt-1 text-xs text-white/30">控制持续调用总量，0 表示不限制</p>
-              </div>
-
-              <div>
-                <label for="fsApiQpsLimit" class="block text-sm font-medium text-white/70 mb-2">文件 API 每秒最大调用次数</label>
-                <input id="fsApiQpsLimit" v-model.number="configForm.fsApiQpsLimit" type="number" min="0" max="1000" required class="input-field" :disabled="formLoading" />
-                <p class="mt-1 text-xs text-white/30">控制短时间突发速度，0 表示不限制；QPS 和 QPM 会同时生效</p>
+                <p class="mt-1 text-xs text-white/30">限制目录列表和文件信息 API 的合计调用频率，0 表示不限制</p>
               </div>
 
               <div class="flex items-start gap-3">
@@ -322,13 +315,7 @@
               <div>
                 <label for="editFsApiQpmLimit" class="block text-sm font-medium text-white/70 mb-2">文件 API 每分钟最大调用次数</label>
                 <input id="editFsApiQpmLimit" v-model.number="configForm.fsApiQpmLimit" type="number" min="0" max="6000" required class="input-field" :disabled="formLoading" />
-                <p class="mt-1 text-xs text-white/30">控制持续调用总量，0 表示不限制</p>
-              </div>
-
-              <div>
-                <label for="editFsApiQpsLimit" class="block text-sm font-medium text-white/70 mb-2">文件 API 每秒最大调用次数</label>
-                <input id="editFsApiQpsLimit" v-model.number="configForm.fsApiQpsLimit" type="number" min="0" max="1000" required class="input-field" :disabled="formLoading" />
-                <p class="mt-1 text-xs text-white/30">控制短时间突发速度，0 表示不限制；QPS 和 QPM 会同时生效</p>
+                <p class="mt-1 text-xs text-white/30">限制目录列表和文件信息 API 的合计调用频率，0 表示不限制</p>
               </div>
 
               <div class="flex items-start gap-3">
@@ -380,15 +367,7 @@ const loading = ref(false)
 const showAddModal = ref(false)
 const showEditModal = ref(false)
 const currentConfig = ref(null)
-const emptyConfigForm = () => ({
-  baseUrl: '',
-  token: '',
-  strmBaseUrl: '',
-  enableUrlEncoding: true,
-  fsApiQpmLimit: 0,
-  fsApiQpsLimit: 0
-})
-const configForm = ref(emptyConfigForm())
+const configForm = ref({ baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true, fsApiQpmLimit: 0 })
 const formLoading = ref(false)
 const formError = ref('')
 
@@ -460,8 +439,7 @@ const editConfig = (config) => {
     token: config.token,
     strmBaseUrl: config.strmBaseUrl || '',
     enableUrlEncoding: config.enableUrlEncoding !== false,
-    fsApiQpmLimit: config.fsApiQpmLimit || 0,
-    fsApiQpsLimit: config.fsApiQpsLimit || 0
+    fsApiQpmLimit: config.fsApiQpmLimit || 0
   }
   showEditModal.value = true
 }
@@ -517,7 +495,7 @@ const toggleConfigStatus = async (config) => {
 
 const closeAddModal = () => {
   showAddModal.value = false
-  configForm.value = emptyConfigForm()
+  configForm.value = { baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true, fsApiQpmLimit: 0 }
   formError.value = ''
   formLoading.value = false
 }
@@ -525,7 +503,7 @@ const closeAddModal = () => {
 const closeEditModal = () => {
   showEditModal.value = false
   currentConfig.value = null
-  configForm.value = emptyConfigForm()
+  configForm.value = { baseUrl: '', token: '', strmBaseUrl: '', enableUrlEncoding: true, fsApiQpmLimit: 0 }
   formError.value = ''
   formLoading.value = false
 }

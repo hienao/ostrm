@@ -15,12 +15,11 @@
         <result column="strm_base_url" property="strmBaseUrl" jdbcType="VARCHAR"/>
         <result column="enable_url_encoding" property="enableUrlEncoding" jdbcType="BOOLEAN"/>
         <result column="fs_api_qpm_limit" property="fsApiQpmLimit" jdbcType="INTEGER"/>
-        <result column="fs_api_qps_limit" property="fsApiQpsLimit" jdbcType="INTEGER"/>
     </resultMap>
 
     <!-- 基础字段 -->
     <sql id="Base_Column_List">
-        id, base_url, token, base_path, username, created_at, updated_at, is_active, strm_base_url, enable_url_encoding, fs_api_qpm_limit, fs_api_qps_limit
+        id, base_url, token, base_path, username, created_at, updated_at, is_active, strm_base_url, enable_url_encoding, fs_api_qpm_limit
     </sql>
 
     <!-- 根据ID查询 -->
@@ -85,9 +84,6 @@
             <if test="fsApiQpmLimit != null">
                 fs_api_qpm_limit,
             </if>
-            <if test="fsApiQpsLimit != null">
-                fs_api_qps_limit,
-            </if>
         </trim>
         <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
             <if test="baseUrl != null and baseUrl != ''">
@@ -113,9 +109,6 @@
             </if>
             <if test="fsApiQpmLimit != null">
                 #{fsApiQpmLimit},
-            </if>
-            <if test="fsApiQpsLimit != null">
-                #{fsApiQpsLimit},
             </if>
         </trim>
     </insert>
@@ -147,9 +140,6 @@
             </if>
             <if test="fsApiQpmLimit != null">
                 fs_api_qpm_limit = #{fsApiQpmLimit},
-            </if>
-            <if test="fsApiQpsLimit != null">
-                fs_api_qps_limit = #{fsApiQpsLimit},
             </if>
             updated_at = CURRENT_TIMESTAMP,
         </set>

@@ -24,7 +24,7 @@ class OpenlistApiRateLimiterTest {
   void zeroLimitDoesNotWait() {
     FakeTime fakeTime = new FakeTime();
     OpenlistApiRateLimiter limiter = new OpenlistApiRateLimiter(fakeTime::now, fakeTime::sleep);
-    OpenlistConfig config = config(1L, 0, 0);
+    OpenlistConfig config = config(1L, 0);
 
     limiter.acquire(config, "/api/fs/list");
     limiter.acquire(config, "/api/fs/get");
@@ -33,43 +33,16 @@ class OpenlistApiRateLimiterTest {
   }
 
   @Test
-  void qpsBucketAllowsBurstThenRefillsContinuously() {
+  void requestsForSameConfigAreEvenlySpaced() {
     FakeTime fakeTime = new FakeTime();
     OpenlistApiRateLimiter limiter = new OpenlistApiRateLimiter(fakeTime::now, fakeTime::sleep);
-    OpenlistConfig config = config(1L, 0, 2);
+    OpenlistConfig config = config(1L, 60);
 
     limiter.acquire(config, "/api/fs/list");
     limiter.acquire(config, "/api/fs/get");
     limiter.acquire(config, "/api/fs/list");
 
-    assertEquals(List.of(TimeUnit.MILLISECONDS.toNanos(500)), fakeTime.waits);
-  }
-
-  @Test
-  void qpmBucketLimitsSustainedTrafficAfterInitialCapacity() {
-    FakeTime fakeTime = new FakeTime();
-    OpenlistApiRateLimiter limiter = new OpenlistApiRateLimiter(fakeTime::now, fakeTime::sleep);
-    OpenlistConfig config = config(1L, 2, 0);
-
-    limiter.acquire(config, "/api/fs/list");
-    limiter.acquire(config, "/api/fs/get");
-    limiter.acquire(config, "/api/fs/list");
-
-    assertEquals(List.of(TimeUnit.SECONDS.toNanos(30)), fakeTime.waits);
-  }
-
-  @Test
-  void requestMustPassBothBuckets() {
-    FakeTime fakeTime = new FakeTime();
-    OpenlistApiRateLimiter limiter = new OpenlistApiRateLimiter(fakeTime::now, fakeTime::sleep);
-    OpenlistConfig config = config(1L, 2, 1);
-
-    limiter.acquire(config, "/api/fs/list");
-    limiter.acquire(config, "/api/fs/get");
-    limiter.acquire(config, "/api/fs/list");
-
-    assertEquals(
-        List.of(TimeUnit.SECONDS.toNanos(1), TimeUnit.SECONDS.toNanos(29)), fakeTime.waits);
+    assertEquals(List.of(TimeUnit.SECONDS.toNanos(1), TimeUnit.SECONDS.toNanos(1)), fakeTime.waits);
   }
 
   @Test
@@ -77,8 +50,8 @@ class OpenlistApiRateLimiterTest {
     FakeTime fakeTime = new FakeTime();
     OpenlistApiRateLimiter limiter = new OpenlistApiRateLimiter(fakeTime::now, fakeTime::sleep);
 
-    limiter.acquire(config(1L, 1, 1), "/api/fs/list");
-    limiter.acquire(config(2L, 1, 1), "/api/fs/list");
+    limiter.acquire(config(1L, 60), "/api/fs/list");
+    limiter.acquire(config(2L, 60), "/api/fs/list");
 
     assertTrue(fakeTime.waits.isEmpty());
   }
@@ -87,10 +60,10 @@ class OpenlistApiRateLimiterTest {
   void changingLimitStartsANewSchedule() {
     FakeTime fakeTime = new FakeTime();
     OpenlistApiRateLimiter limiter = new OpenlistApiRateLimiter(fakeTime::now, fakeTime::sleep);
-    OpenlistConfig config = config(1L, 1, 1);
+    OpenlistConfig config = config(1L, 60);
 
     limiter.acquire(config, "/api/fs/list");
-    config.setFsApiQpsLimit(2);
+    config.setFsApiQpmLimit(30);
     limiter.acquire(config, "/api/fs/list");
 
     assertTrue(fakeTime.waits.isEmpty());
@@ -104,15 +77,15 @@ class OpenlistApiRateLimiterTest {
             ignored -> {
               throw new InterruptedException("interrupted");
             });
-    OpenlistConfig config = config(1L, 0, 1);
+    OpenlistConfig config = config(1L, 60);
     limiter.acquire(config, "/api/fs/list");
 
     assertThrows(BusinessException.class, () -> limiter.acquire(config, "/api/fs/list"));
     assertTrue(Thread.currentThread().isInterrupted());
   }
 
-  private OpenlistConfig config(long id, int qpmLimit, int qpsLimit) {
-    return new OpenlistConfig().setId(id).setFsApiQpmLimit(qpmLimit).setFsApiQpsLimit(qpsLimit);
+  private OpenlistConfig config(long id, int qpmLimit) {
+    return new OpenlistConfig().setId(id).setFsApiQpmLimit(qpmLimit);
   }
 
   private static class FakeTime {
