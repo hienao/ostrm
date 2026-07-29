@@ -99,6 +99,15 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h6l2 2h10v10H3V7zm5 6h8m-4-4v8"></path>
                   </svg>
                 </button>
+                <button
+                  class="btn-icon text-purple-400 hover:text-purple-300"
+                  @click="openManualScraping(task)"
+                  title="手动刮削"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
                 <button class="btn-icon" @click="editTask(task)" title="编辑">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
@@ -531,6 +540,10 @@ const validateTaskPath = async (taskPath) => {
   } catch (error) {
     throw new Error(error.message || '路径验证失败，请检查路径是否正确')
   }
+}
+
+const openManualScraping = (task) => {
+  router.push(`/manual-scraping/${task.id}`)
 }
 
 const submitTask = async () => {
