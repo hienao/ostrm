@@ -11,7 +11,7 @@
           <span v-if="treeResult"> · {{ libraryTypeLabel(treeResult.libraryType) }}</span>
         </p>
       </div>
-      <button type="button" class="btn-primary" :disabled="!canPreview || previewing" @click="loadPreview">
+      <button type="button" class="btn-primary" :disabled="!canPreview || previewing" @click="loadPreview(false)">
         <svg v-if="previewing" class="mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -66,7 +66,92 @@
           </div>
         </div>
 
+        <div v-else-if="!preview.matched" class="mx-auto max-w-xl space-y-5 py-8">
+          <div class="rounded-xl border border-amber-500/25 bg-amber-500/10 p-5">
+            <h2 class="font-medium text-amber-100">没有找到匹配的 TMDB 条目</h2>
+            <p class="mt-2 text-sm leading-6 text-amber-100/65">
+              {{ preview.matchMessage }}
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-white/8 bg-white/[0.03] p-5">
+            <h3 class="font-medium text-white">手动修正搜索条件</h3>
+            <div class="mt-4 grid gap-4 sm:grid-cols-[minmax(0,1fr)_120px]">
+              <div>
+                <label for="manualTitle" class="mb-1.5 block text-xs text-white/50">标题</label>
+                <input
+                  id="manualTitle"
+                  v-model="manualTitle"
+                  type="text"
+                  class="input-field"
+                  placeholder="例如：镖人：风起大漠"
+                >
+              </div>
+              <div>
+                <label for="manualYear" class="mb-1.5 block text-xs text-white/50">年份</label>
+                <input id="manualYear" v-model="manualYear" type="text" class="input-field" placeholder="2026">
+              </div>
+            </div>
+            <div class="my-4 flex items-center gap-3 text-xs text-white/30">
+              <span class="h-px flex-1 bg-white/8" />
+              或直接指定
+              <span class="h-px flex-1 bg-white/8" />
+            </div>
+            <div>
+              <label for="manualTmdbId" class="mb-1.5 block text-xs text-white/50">TMDB ID</label>
+              <input
+                id="manualTmdbId"
+                v-model="manualTmdbId"
+                type="number"
+                min="1"
+                class="input-field"
+                placeholder="输入后将跳过标题搜索"
+              >
+            </div>
+            <p v-if="manualSearchError" class="mt-3 text-sm text-red-300">{{ manualSearchError }}</p>
+            <button
+              type="button"
+              class="btn-primary mt-5 w-full justify-center"
+              :disabled="previewing"
+              @click="loadPreview(true)"
+            >
+              {{ previewing ? '正在搜索...' : (manualTmdbId ? '按 TMDB ID 查询' : '重新搜索') }}
+            </button>
+          </div>
+        </div>
+
         <div v-else class="space-y-6">
+          <div class="flex justify-end">
+            <button
+              type="button"
+              class="text-sm text-blue-300 hover:text-blue-200"
+              @click="toggleManualSearch"
+            >
+              {{ showManualSearch ? '收起手动搜索' : '匹配不正确？手动搜索' }}
+            </button>
+          </div>
+
+          <div v-if="showManualSearch" class="rounded-xl border border-blue-500/20 bg-blue-500/[0.06] p-4">
+            <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px_130px_auto] sm:items-end">
+              <div>
+                <label for="matchedManualTitle" class="mb-1.5 block text-xs text-white/50">标题</label>
+                <input id="matchedManualTitle" v-model="manualTitle" type="text" class="input-field">
+              </div>
+              <div>
+                <label for="matchedManualYear" class="mb-1.5 block text-xs text-white/50">年份</label>
+                <input id="matchedManualYear" v-model="manualYear" type="text" class="input-field">
+              </div>
+              <div>
+                <label for="matchedManualTmdbId" class="mb-1.5 block text-xs text-white/50">TMDB ID</label>
+                <input id="matchedManualTmdbId" v-model="manualTmdbId" type="number" min="1" class="input-field">
+              </div>
+              <button type="button" class="btn-primary justify-center" :disabled="previewing" @click="loadPreview(true)">
+                {{ previewing ? '搜索中...' : '查询' }}
+              </button>
+            </div>
+            <p v-if="manualSearchError" class="mt-3 text-sm text-red-300">{{ manualSearchError }}</p>
+          </div>
+
           <div class="flex flex-col gap-5 sm:flex-row">
             <img
               v-if="preview.posterUrl"
@@ -180,12 +265,17 @@ const previewing = ref(false)
 const executing = ref(false)
 const pageError = ref('')
 const previewError = ref('')
+const manualSearchError = ref('')
 const treeResult = ref(null)
 const taskInfo = ref(null)
 const selectedDirectory = ref(null)
 const preview = ref(null)
 const executeResult = ref(null)
 const renameMedia = ref(false)
+const manualTitle = ref('')
+const manualYear = ref('')
+const manualTmdbId = ref('')
+const showManualSearch = ref(false)
 
 const canPreview = computed(() =>
   selectedDirectory.value && selectedDirectory.value.videoFileCount > 0
@@ -230,28 +320,65 @@ const selectDirectory = (node) => {
   selectedDirectory.value = node
   preview.value = null
   previewError.value = ''
+  manualSearchError.value = ''
   executeResult.value = null
   renameMedia.value = false
+  manualTitle.value = ''
+  manualYear.value = ''
+  manualTmdbId.value = ''
+  showManualSearch.value = false
 }
 
-const loadPreview = async () => {
+const loadPreview = async (manual = false) => {
   if (!canPreview.value) return
+  if (manual && !manualTmdbId.value && !manualTitle.value.trim()) {
+    manualSearchError.value = '请输入标题，或者直接输入 TMDB ID'
+    return
+  }
   previewing.value = true
   previewError.value = ''
+  manualSearchError.value = ''
   executeResult.value = null
   try {
+    const body = { directoryPath: selectedDirectory.value.path }
+    if (manual) {
+      if (manualTmdbId.value) {
+        body.tmdbId = Number(manualTmdbId.value)
+      } else {
+        body.title = manualTitle.value.trim()
+        if (manualYear.value.trim()) body.year = manualYear.value.trim()
+      }
+    }
     const response = await authenticatedApiCall(`/task-config/${taskId}/manual-scraping/preview`, {
       method: 'POST',
-      body: { directoryPath: selectedDirectory.value.path }
+      body
     })
     if (response.code !== 200) throw new Error(response.message || '媒体识别失败')
     preview.value = response.data
+    manualTitle.value = response.data.searchTitle || response.data.title || manualTitle.value
+    manualYear.value = response.data.searchYear || response.data.year || manualYear.value
+    if (response.data.matched) {
+      manualTmdbId.value = String(response.data.tmdbId || '')
+      showManualSearch.value = false
+    }
   } catch (error) {
     logger.error('手动刮削识别失败:', error)
-    preview.value = null
-    previewError.value = error.message || '媒体识别失败'
+    if (manual) {
+      manualSearchError.value = error.message || '搜索失败'
+    } else {
+      preview.value = null
+      previewError.value = error.message || '媒体识别失败'
+    }
   } finally {
     previewing.value = false
+  }
+}
+
+const toggleManualSearch = () => {
+  showManualSearch.value = !showManualSearch.value
+  manualSearchError.value = ''
+  if (showManualSearch.value) {
+    manualTmdbId.value = ''
   }
 }
 

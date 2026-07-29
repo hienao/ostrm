@@ -210,8 +210,7 @@ public class TaskConfigController {
   public ResponseEntity<ApiResponse<Preview>> previewManualScraping(
       @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
       @Valid @RequestBody PreviewRequest request) {
-    return ResponseEntity.ok(
-        ApiResponse.success(manualScrapingService.preview(id, request.getDirectoryPath())));
+    return ResponseEntity.ok(ApiResponse.success(manualScrapingService.preview(id, request)));
   }
 
   /** 确认执行手动刮削 */
