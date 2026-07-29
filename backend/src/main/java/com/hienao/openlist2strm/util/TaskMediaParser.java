@@ -199,6 +199,11 @@ public final class TaskMediaParser {
     return matcher.matches() ? Integer.parseInt(matcher.group(1)) : null;
   }
 
+  /** 判断目录名是否为任务目录结构支持的季目录。 */
+  public static boolean isSeasonDirectory(String directory) {
+    return directory != null && parseSeason(directory) != null;
+  }
+
   private static ParsedTitle parseTitle(String value) {
     if (value == null || value.isBlank()) {
       return new ParsedTitle(null, null);
