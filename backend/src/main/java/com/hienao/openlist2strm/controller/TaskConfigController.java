@@ -2,9 +2,11 @@ package com.hienao.openlist2strm.controller;
 
 import com.hienao.openlist2strm.dto.ApiResponse;
 import com.hienao.openlist2strm.dto.task.TaskConfigDto;
+import com.hienao.openlist2strm.dto.task.TaskStructureCheckResult;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.service.TaskConfigService;
 import com.hienao.openlist2strm.service.TaskExecutionService;
+import com.hienao.openlist2strm.service.TaskStructureCheckService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -35,6 +37,7 @@ public class TaskConfigController {
 
   private final TaskConfigService taskConfigService;
   private final TaskExecutionService taskExecutionService;
+  private final TaskStructureCheckService taskStructureCheckService;
 
   /** 查询所有配置 */
   @GetMapping
@@ -176,6 +179,14 @@ public class TaskConfigController {
     Boolean isIncremental = request != null ? request.getIsIncremental() : null;
     taskExecutionService.submitTask(id, isIncremental);
     return ResponseEntity.ok(ApiResponse.success("任务已提交执行"));
+  }
+
+  /** 检查任务目录结构 */
+  @PostMapping("/{id}/structure-check")
+  @Operation(summary = "检查任务目录结构", description = "递归扫描任务目录，并以文件树返回目录层级不符合要求的视频文件")
+  public ResponseEntity<ApiResponse<TaskStructureCheckResult>> checkTaskStructure(
+      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id) {
+    return ResponseEntity.ok(ApiResponse.success(taskStructureCheckService.check(id)));
   }
 
   /** 更新状态请求体 */
