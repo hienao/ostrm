@@ -545,45 +545,14 @@ public class OpenlistApiService {
    * @return 文件内容字节数组
    */
   public byte[] getFileContent(OpenlistConfig config, OpenlistFile file) {
-    // 默认使用URL编码（兼容STRM文件写入场景）
-    return getFileContent(config, file, true);
-  }
-
-  /**
-   * 获取文件内容（使用OpenlistFile对象，包含sign参数）
-   *
-   * @param config OpenList配置
-   * @param file OpenlistFile对象
-   * @param enableUrlEncoding 是否启用URL编码（false适用于刮削文件下载场景）
-   * @return 文件内容字节数组
-   */
-  public byte[] getFileContent(
-      OpenlistConfig config, OpenlistFile file, boolean enableUrlEncoding) {
     try {
-      // 使用OpenlistFile中的url字段，已包含sign参数
-      String encodedUrl;
+      String downloadUrl = file.getUrl();
       if (file.getSign() != null && !file.getSign().isEmpty()) {
-        // 构建完整URL
-        String completeUrl = file.getUrl() + "?sign=" + file.getSign();
-        if (enableUrlEncoding) {
-          // 使用统一的智能编码，避免双重编码（适用于STRM文件写入场景）
-          encodedUrl = UrlEncoder.encodeUrlSmart(completeUrl);
-        } else {
-          // 不进行URL编码，直接使用原始URL
-          encodedUrl = completeUrl;
-        }
-      } else {
-        if (enableUrlEncoding) {
-          // 使用统一编码标准确保中文路径正确处理
-          encodedUrl = UrlEncoder.encodeUrlSmart(file.getUrl());
-        } else {
-          // 不进行编码，直接使用原始URL
-          encodedUrl = file.getUrl();
-        }
+        downloadUrl = downloadUrl + "?sign=" + file.getSign();
       }
 
-      log.debug("下载文件请求 - 文件名: {}, 完整URL: {}", file.getName(), encodedUrl);
-      return downloadFileWithUrl(config, file, encodedUrl);
+      log.debug("下载文件请求 - 文件名: {}, 完整URL: {}", file.getName(), downloadUrl);
+      return downloadFileWithUrl(config, file, downloadUrl);
     } catch (Exception e) {
       log.error("下载文件异常: {}, 错误: {}", file.getName(), e.getMessage());
       return null;
@@ -591,11 +560,11 @@ public class OpenlistApiService {
   }
 
   /**
-   * 使用预编码的URL下载文件内容 调用方负责对URL进行编码，此方法直接使用传入的URL
+   * 使用指定 URL 下载文件内容。URL 可以是原始地址或已编码地址，实际请求前会统一进行幂等规范化。
    *
    * @param config OpenList配置
    * @param file OpenlistFile对象（仅用于日志记录）
-   * @param encodedUrl 已编码的完整下载URL
+   * @param encodedUrl 原始或已编码的完整下载URL
    * @return 文件内容字节数组
    */
   public byte[] downloadWithEncodedUrl(
@@ -604,16 +573,12 @@ public class OpenlistApiService {
   }
 
   /** 将 OpenList 文件直接流式写入目标文件，下载成功后原子替换目标。 */
-  public boolean downloadToFile(
-      OpenlistConfig config, OpenlistFile file, Path targetFile, boolean enableUrlEncoding) {
+  public boolean downloadToFile(OpenlistConfig config, OpenlistFile file, Path targetFile) {
     String downloadUrl;
     if (file.getSign() != null && !file.getSign().isEmpty()) {
       downloadUrl = file.getUrl() + "?sign=" + file.getSign();
     } else {
       downloadUrl = file.getUrl();
-    }
-    if (enableUrlEncoding) {
-      downloadUrl = UrlEncoder.encodeUrlSmart(downloadUrl);
     }
     return downloadUrlToFile(config, file, downloadUrl, targetFile);
   }
@@ -643,9 +608,10 @@ public class OpenlistApiService {
       }
 
       Path outputFile = temporaryFile;
+      java.net.URI downloadUri = createDownloadUri(downloadUrl);
       Boolean downloaded =
           restTemplate.execute(
-              java.net.URI.create(downloadUrl),
+              downloadUri,
               HttpMethod.GET,
               request -> request.getHeaders().putAll(headers),
               response -> {
@@ -710,7 +676,7 @@ public class OpenlistApiService {
       // 发送GET请求获取文件内容 - 使用URI对象避免Spring将{...}解析为模板变量
       ResponseEntity<byte[]> response =
           restTemplate.exchange(
-              java.net.URI.create(encodedUrl), HttpMethod.GET, entity, byte[].class);
+              createDownloadUri(encodedUrl), HttpMethod.GET, entity, byte[].class);
 
       log.debug(
           "文件下载响应 - 状态码: {}, Content-Type: {}, Headers: {}",
@@ -758,7 +724,7 @@ public class OpenlistApiService {
             if (isExternalRedirect) {
               // 对于外部CDN，使用URI直接请求，避免RestTemplate自动编码导致签名失效
               try {
-                java.net.URI uri = java.net.URI.create(redirectUrl);
+                java.net.URI uri = createDownloadUri(redirectUrl);
                 redirectResponse =
                     restTemplate.exchange(uri, HttpMethod.GET, redirectEntity, byte[].class);
                 log.debug("使用URI直接请求外部CDN，避免自动编码: {}", uri);
@@ -867,7 +833,7 @@ public class OpenlistApiService {
       // 发送GET请求获取文件内容 - 使用URI对象避免Spring将{...}解析为模板变量
       ResponseEntity<byte[]> response =
           restTemplate.exchange(
-              java.net.URI.create(encodedUrl), HttpMethod.GET, entity, byte[].class);
+              createDownloadUri(encodedUrl), HttpMethod.GET, entity, byte[].class);
 
       log.debug(
           "文件下载响应 - 状态码: {}, Content-Type: {}, Headers: {}",
@@ -915,7 +881,7 @@ public class OpenlistApiService {
             if (isExternalRedirect) {
               // 对于外部CDN，使用URI直接请求，避免RestTemplate自动编码导致签名失效
               try {
-                java.net.URI uri = java.net.URI.create(redirectUrl);
+                java.net.URI uri = createDownloadUri(redirectUrl);
                 redirectResponse =
                     restTemplate.exchange(uri, HttpMethod.GET, redirectEntity, byte[].class);
                 log.debug("使用URI直接请求外部CDN，避免自动编码: {}", uri);
@@ -989,6 +955,10 @@ public class OpenlistApiService {
       log.error("下载文件异常: {}, 错误: {}", filePath, e.getMessage(), e);
       return null;
     }
+  }
+
+  private java.net.URI createDownloadUri(String downloadUrl) {
+    return java.net.URI.create(UrlEncoder.encodeUrlSmart(downloadUrl));
   }
 
   /**

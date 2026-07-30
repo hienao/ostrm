@@ -95,7 +95,7 @@ public class NfoDownloadHandler implements FileProcessorHandler {
       if (nfoFile != null) {
         Path targetPath = Paths.get(context.getSaveDirectory(), nfoFileName);
         if (openlistApiService.downloadToFile(
-            context.getOpenlistConfig(), nfoFile.getOpenlistFile(), targetPath, false)) {
+            context.getOpenlistConfig(), nfoFile.getOpenlistFile(), targetPath)) {
           log.info("从 OpenList 下载 NFO 文件成功: {}", nfoFileName);
           context.setAttribute("metadataAvailable", true);
           context.getStats().incrementProcessed();

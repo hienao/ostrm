@@ -815,8 +815,8 @@ public class MediaScrapingService {
           if (isMatch) {
             log.debug("准备复制{}文件: {}", fileTypeDescription, file.getName());
 
-            // 下载文件内容 (不使用URL编码)
-            byte[] content = openlistApiService.getFileContent(openlistConfig, file, false);
+            // 下载文件内容，OpenlistApiService 会在请求边界统一规范化 URL
+            byte[] content = openlistApiService.getFileContent(openlistConfig, file);
 
             if (content != null && content.length > 0) {
               Path targetFile = Paths.get(saveDirectory, file.getName());
