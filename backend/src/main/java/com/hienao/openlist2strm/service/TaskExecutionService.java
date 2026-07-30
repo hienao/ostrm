@@ -462,7 +462,8 @@ public class TaskExecutionService {
     Map<String, Integer> reasonCounts = new java.util.LinkedHashMap<>();
     for (OpenlistApiService.OpenlistFile file : videoFiles) {
       String relativePath =
-          strmFileService.calculateRelativePath(taskConfig.getPath(), file.getPath());
+          TaskDirectoryStructureValidator.calculateRelativePath(
+              taskConfig.getPath(), file.getPath());
       java.util.Optional<String> reason =
           TaskDirectoryStructureValidator.validate(relativePath, libraryType);
       if (reason.isEmpty()) {
