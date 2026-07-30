@@ -1,6 +1,7 @@
 package com.hienao.openlist2strm.util;
 
 import com.hienao.openlist2strm.entity.MediaLibraryType;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -9,6 +10,17 @@ import java.util.Optional;
 public final class TaskDirectoryStructureValidator {
 
   private TaskDirectoryStructureValidator() {}
+
+  /** 计算包含文件名的任务相对路径，供目录检查与正式任务过滤共同使用。 */
+  public static String calculateRelativePath(String taskPath, String filePath) {
+    if (taskPath == null || filePath == null) {
+      return "";
+    }
+    String normalizedRoot = normalizePath(taskPath).replaceAll("/+$", "");
+    String normalizedFile = normalizePath(filePath);
+    String prefix = normalizedRoot + "/";
+    return normalizedFile.startsWith(prefix) ? normalizedFile.substring(prefix.length()) : "";
+  }
 
   public static Optional<String> validate(String relativeFilePath, MediaLibraryType libraryType) {
     List<String> segments = splitPath(relativeFilePath);
@@ -70,5 +82,11 @@ public final class TaskDirectoryStructureValidator {
     return Arrays.stream(path.replace('\\', '/').split("/+"))
         .filter(segment -> !segment.isBlank())
         .toList();
+  }
+
+  public static String normalizePath(String path) {
+    String normalized =
+        Paths.get(path.replace('\\', '/')).normalize().toString().replace('\\', '/');
+    return normalized.startsWith("/") ? normalized : "/" + normalized;
   }
 }

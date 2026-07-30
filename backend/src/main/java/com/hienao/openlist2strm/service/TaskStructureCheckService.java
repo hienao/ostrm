@@ -9,7 +9,6 @@ import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
 import com.hienao.openlist2strm.util.TaskDirectoryStructureValidator;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -83,8 +82,10 @@ public class TaskStructureCheckService {
     if (libraryType == MediaLibraryType.AUTO) {
       throw new BusinessException("自动识别任务没有固定目录规范");
     }
-    String normalizedRoot = normalizePath(task.getPath()).replaceAll("/+$", "");
-    String normalizedDirectory = normalizePath(directoryPath).replaceAll("/+$", "");
+    String normalizedRoot =
+        TaskDirectoryStructureValidator.normalizePath(task.getPath()).replaceAll("/+$", "");
+    String normalizedDirectory =
+        TaskDirectoryStructureValidator.normalizePath(directoryPath).replaceAll("/+$", "");
     if (normalizedDirectory.equals(normalizedRoot)
         || !parentPath(normalizedDirectory).equals(normalizedRoot)) {
       throw new BusinessException("只能检查任务根目录下的第一层子目录");
@@ -163,12 +164,16 @@ public class TaskStructureCheckService {
             .toList();
     int invalidCount = 0;
     for (OpenlistApiService.OpenlistFile file : videoFiles) {
-      String taskRelativePath = calculateRelativePath(task.getPath(), file.getPath());
+      String taskRelativePath =
+          TaskDirectoryStructureValidator.calculateRelativePath(task.getPath(), file.getPath());
       Optional<String> reason =
           TaskDirectoryStructureValidator.validate(taskRelativePath, libraryType);
       if (reason.isPresent()) {
         invalidCount++;
-        addInvalidFile(root, calculateRelativePath(checkedPath, file.getPath()), reason.get());
+        addInvalidFile(
+            root,
+            TaskDirectoryStructureValidator.calculateRelativePath(checkedPath, file.getPath()),
+            reason.get());
       }
     }
     String message =
@@ -224,22 +229,6 @@ public class TaskStructureCheckService {
         .message(message)
         .tree(toDto(root))
         .build();
-  }
-
-  private String calculateRelativePath(String taskPath, String filePath) {
-    if (taskPath == null || filePath == null) {
-      return "";
-    }
-    String normalizedRoot = normalizePath(taskPath).replaceAll("/+$", "");
-    String normalizedFile = normalizePath(filePath);
-    String prefix = normalizedRoot + "/";
-    return normalizedFile.startsWith(prefix) ? normalizedFile.substring(prefix.length()) : "";
-  }
-
-  private String normalizePath(String path) {
-    String normalized =
-        Paths.get(path.replace('\\', '/')).normalize().toString().replace('\\', '/');
-    return normalized.startsWith("/") ? normalized : "/" + normalized;
   }
 
   private String parentPath(String path) {
