@@ -5,12 +5,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -124,11 +125,15 @@ public class CoverImageService {
       Files.createDirectories(parentDir);
     }
 
-    // 文件存在时直接覆盖（始终覆盖）
+    // 增量任务中保留已存在图片，避免重复请求 TMDB 图片服务
     if (Files.exists(savePath)) {
-      log.debug("图片文件已存在，覆盖下载: {}", saveFilePath);
+      log.debug("图片文件已存在，跳过下载: {}", saveFilePath);
+      return;
     }
 
+    Path temporaryPath =
+        savePath.resolveSibling(
+            savePath.getFileName() + ".part-" + UUID.randomUUID().toString().substring(0, 8));
     try {
       // 设置请求头
       HttpHeaders headers = new HttpHeaders();
@@ -136,25 +141,38 @@ public class CoverImageService {
       headers.set("Accept", "image/*");
       HttpEntity<String> entity = new HttpEntity<>(headers);
 
-      // 下载图片
-      ResponseEntity<byte[]> response =
-          restTemplate.exchange(imageUrl, HttpMethod.GET, entity, byte[].class);
+      Boolean downloaded =
+          restTemplate.execute(
+              imageUrl,
+              HttpMethod.GET,
+              request -> request.getHeaders().putAll(entity.getHeaders()),
+              response -> {
+                if (!response.getStatusCode().is2xxSuccessful()) {
+                  return false;
+                }
+                try (var body = response.getBody()) {
+                  Files.copy(body, temporaryPath, StandardCopyOption.REPLACE_EXISTING);
+                }
+                return Files.size(temporaryPath) > 0;
+              });
 
-      if (!response.getStatusCode().is2xxSuccessful()) {
-        throw new IOException("HTTP请求失败，状态码: " + response.getStatusCode());
-      }
-
-      byte[] imageData = response.getBody();
-      if (imageData == null || imageData.length == 0) {
+      if (!Boolean.TRUE.equals(downloaded)) {
         throw new IOException("下载的图片数据为空");
       }
-
-      // 保存图片
-      Files.write(savePath, imageData);
+      try {
+        Files.move(
+            temporaryPath,
+            savePath,
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING);
+      } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+        Files.move(temporaryPath, savePath, StandardCopyOption.REPLACE_EXISTING);
+      }
 
       log.debug("图片下载完成: {} -> {}", imageUrl, saveFilePath);
 
     } catch (Exception e) {
+      Files.deleteIfExists(temporaryPath);
       log.error("下载图片失败: {} -> {}", imageUrl, saveFilePath, e);
       throw new IOException("下载图片失败: " + e.getMessage(), e);
     }

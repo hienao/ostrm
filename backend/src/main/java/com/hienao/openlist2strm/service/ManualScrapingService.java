@@ -1,5 +1,7 @@
 package com.hienao.openlist2strm.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.hienao.openlist2strm.dto.media.AiRecognitionResult;
 import com.hienao.openlist2strm.dto.media.MediaInfo;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.DirectoryNode;
@@ -24,6 +26,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -53,6 +56,8 @@ public class ManualScrapingService {
   private final TmdbApiService tmdbApiService;
   private final NfoGeneratorService nfoGeneratorService;
   private final CoverImageService coverImageService;
+  private final Cache<PreviewCacheKey, PreviewSnapshot> previewCache =
+      Caffeine.newBuilder().maximumSize(200).expireAfterWrite(Duration.ofMinutes(5)).build();
 
   @Value("${app.paths.data}")
   private String applicationDataPath;
@@ -115,8 +120,8 @@ public class ManualScrapingService {
     Context context = loadContext(taskId);
     String selectedPath = requireTaskPath(context.task(), request.getDirectoryPath());
     validateSelectableDirectory(context.libraryType(), selectedPath);
-    List<OpenlistApiService.OpenlistFile> videoFiles =
-        findVideoFiles(context.openlistConfig(), selectedPath);
+    VideoScan videoScan = scanVideoFiles(context.openlistConfig(), selectedPath);
+    List<OpenlistApiService.OpenlistFile> videoFiles = videoScan.videoFiles();
     if (videoFiles.isEmpty()) {
       throw new BusinessException("所选目录下没有可刮削的媒体文件");
     }
@@ -168,26 +173,32 @@ public class ManualScrapingService {
         buildRenamePlan(
             context, selectedPath, videoFiles, match.title(), match.year(), match.tmdbId());
 
-    return Preview.builder()
-        .directoryPath(selectedPath)
-        .mediaType(match.mediaType())
-        .matched(true)
-        .searchTitle(match.title())
-        .searchYear(match.year())
-        .tmdbId(match.tmdbId())
-        .title(match.title())
-        .originalTitle(match.originalTitle())
-        .year(match.year())
-        .overview(match.overview())
-        .voteAverage(match.voteAverage())
-        .posterUrl(match.posterUrl())
-        .backdropUrl(match.backdropUrl())
-        .videoFileCount(videoFiles.size())
-        .proposedDirectoryName(renamePlan.directoryName())
-        .proposedFileRenames(renamePlan.files())
-        .generatedFiles(metadataNames(match, renamePlan, false))
-        .renamedGeneratedFiles(metadataNames(match, renamePlan, true))
-        .build();
+    Preview preview =
+        Preview.builder()
+            .directoryPath(selectedPath)
+            .mediaType(match.mediaType())
+            .matched(true)
+            .searchTitle(match.title())
+            .searchYear(match.year())
+            .tmdbId(match.tmdbId())
+            .title(match.title())
+            .originalTitle(match.originalTitle())
+            .year(match.year())
+            .overview(match.overview())
+            .voteAverage(match.voteAverage())
+            .posterUrl(match.posterUrl())
+            .backdropUrl(match.backdropUrl())
+            .videoFileCount(videoFiles.size())
+            .proposedDirectoryName(renamePlan.directoryName())
+            .proposedFileRenames(renamePlan.files())
+            .generatedFiles(metadataNames(match, renamePlan, false))
+            .renamedGeneratedFiles(metadataNames(match, renamePlan, true))
+            .build();
+    previewCache.put(
+        new PreviewCacheKey(taskId, selectedPath, match.tmdbId()),
+        new PreviewSnapshot(
+            match, List.copyOf(videoFiles), renamePlan, videoScan.rootDirectoryFingerprint()));
+    return preview;
   }
 
   public Preview preview(Long taskId, String directoryPath) {
@@ -251,7 +262,13 @@ public class ManualScrapingService {
         checkpointDirectoryPath,
         checkpointRenamedFileCount);
     validateRequestedType(context.libraryType(), request.getMediaType());
-    Match match = loadMatch(request.getMediaType(), request.getTmdbId());
+    PreviewCacheKey previewCacheKey =
+        new PreviewCacheKey(taskId, originalPath, request.getTmdbId());
+    PreviewSnapshot previewSnapshot = previewCache.getIfPresent(previewCacheKey);
+    Match match =
+        previewSnapshot == null
+            ? loadMatch(request.getMediaType(), request.getTmdbId())
+            : previewSnapshot.match();
     String expectedDirectoryName = buildDirectoryName(match.title(), match.year(), match.tmdbId());
     String selectedPath =
         resolveExecutionPath(
@@ -262,7 +279,9 @@ public class ManualScrapingService {
     validateSelectableDirectory(context.libraryType(), selectedPath);
 
     List<OpenlistApiService.OpenlistFile> videoFiles =
-        findVideoFiles(context.openlistConfig(), selectedPath);
+        canReusePreviewSnapshot(context, selectedPath, originalPath, previewSnapshot)
+            ? previewSnapshot.videoFiles()
+            : findVideoFiles(context.openlistConfig(), selectedPath);
     if (videoFiles.isEmpty()) {
       throw new BusinessException("所选目录下没有可刮削的媒体文件");
     }
@@ -373,6 +392,7 @@ public class ManualScrapingService {
       listener.checkpoint(
           ManualScrapingJobStage.COMPLETED, 100, "手动刮削完成", finalDirectoryPath, renamedFileCount);
       deleteTempDirectory(workspace);
+      previewCache.invalidate(previewCacheKey);
       return ExecuteResult.builder()
           .finalDirectoryPath(finalDirectoryPath)
           .renamedFileCount(renamedFileCount)
@@ -406,11 +426,50 @@ public class ManualScrapingService {
 
   private List<OpenlistApiService.OpenlistFile> findVideoFiles(
       OpenlistConfig config, String directoryPath) {
-    return openlistApiService.getAllFilesRecursively(config, directoryPath).stream()
-        .filter(file -> "file".equals(file.getType()))
-        .filter(file -> strmFileService.isVideoFile(file.getName()))
-        .sorted(Comparator.comparing(OpenlistApiService.OpenlistFile::getPath))
-        .toList();
+    return scanVideoFiles(config, directoryPath).videoFiles();
+  }
+
+  private VideoScan scanVideoFiles(OpenlistConfig config, String directoryPath) {
+    List<OpenlistApiService.OpenlistFile> entries =
+        openlistApiService.getAllFilesRecursively(config, directoryPath);
+    List<OpenlistApiService.OpenlistFile> videoFiles =
+        entries.stream()
+            .filter(file -> "file".equals(file.getType()))
+            .filter(file -> strmFileService.isVideoFile(file.getName()))
+            .sorted(Comparator.comparing(OpenlistApiService.OpenlistFile::getPath))
+            .toList();
+    return new VideoScan(videoFiles, directoryFingerprint(entries, directoryPath));
+  }
+
+  private boolean canReusePreviewSnapshot(
+      Context context, String selectedPath, String originalPath, PreviewSnapshot previewSnapshot) {
+    if (previewSnapshot == null || !selectedPath.equals(originalPath)) {
+      return false;
+    }
+    List<OpenlistApiService.OpenlistFile> currentRoot =
+        openlistApiService.getDirectoryContents(context.openlistConfig(), selectedPath);
+    return previewSnapshot
+        .rootDirectoryFingerprint()
+        .equals(directoryFingerprint(currentRoot, selectedPath));
+  }
+
+  private Map<String, String> directoryFingerprint(
+      List<OpenlistApiService.OpenlistFile> entries, String directoryPath) {
+    Map<String, String> fingerprint = new java.util.TreeMap<>();
+    String normalizedDirectory = normalizePath(directoryPath);
+    for (OpenlistApiService.OpenlistFile entry : entries) {
+      if (normalizedDirectory.equals(normalizePath(parentPath(entry.getPath())))) {
+        fingerprint.put(
+            entry.getPath(),
+            String.join(
+                "|",
+                String.valueOf(entry.getType()),
+                String.valueOf(entry.getSize()),
+                String.valueOf(entry.getModified()),
+                String.valueOf(entry.getSign())));
+      }
+    }
+    return fingerprint;
   }
 
   private MediaInfo recognize(Context context, OpenlistApiService.OpenlistFile file) {
@@ -706,7 +765,7 @@ public class ManualScrapingService {
       openlistApiService.uploadFile(
           context.openlistConfig(),
           join(directoryPath, file.remoteName()),
-          Files.readAllBytes(file.localPath()),
+          file.localPath(),
           file.contentType());
       uploaded.add(file.remoteName());
       listener.uploaded(uploaded.size(), generated.size());
@@ -963,6 +1022,18 @@ public class ManualScrapingService {
       TmdbTvDetail tvDetail) {}
 
   private record RenamePlan(String directoryName, List<RenameItem> files) {}
+
+  private record PreviewCacheKey(Long taskId, String directoryPath, Integer tmdbId) {}
+
+  private record PreviewSnapshot(
+      Match match,
+      List<OpenlistApiService.OpenlistFile> videoFiles,
+      RenamePlan renamePlan,
+      Map<String, String> rootDirectoryFingerprint) {}
+
+  private record VideoScan(
+      List<OpenlistApiService.OpenlistFile> videoFiles,
+      Map<String, String> rootDirectoryFingerprint) {}
 
   private record GeneratedFile(Path localPath, String remoteName, String contentType) {}
 

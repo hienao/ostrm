@@ -7,7 +7,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +32,8 @@ public class SystemConfigService {
   private final PathConfiguration pathConfiguration;
 
   private static final String CONFIG_FILE = "systemconf.json";
+  private final Object configLock = new Object();
+  private volatile Map<String, Object> cachedConfig;
 
   /** 获取配置目录路径 */
   private String getConfigDirectoryPath() {
@@ -46,85 +51,71 @@ public class SystemConfigService {
    * @return 系统配置Map
    */
   public Map<String, Object> getSystemConfig() {
-    try {
-      // 确保配置目录存在
-      createConfigDirectoryIfNotExists();
+    Map<String, Object> snapshot = cachedConfig;
+    if (snapshot != null) {
+      return snapshot;
+    }
 
-      File configFile = new File(getConfigFilePath());
-      Map<String, Object> result;
-      boolean needSave = false;
+    synchronized (configLock) {
+      if (cachedConfig != null) {
+        return cachedConfig;
+      }
+      try {
+        createConfigDirectoryIfNotExists();
 
-      if (!configFile.exists()) {
-        // 如果配置文件不存在，创建默认配置
-        log.info("系统配置文件不存在，创建默认配置: {}", getConfigFilePath());
-        result = getDefaultConfig();
-        needSave = true;
-      } else {
-        // 读取配置文件
-        String content = Files.readString(Paths.get(getConfigFilePath()));
-        if (content.trim().isEmpty()) {
+        File configFile = new File(getConfigFilePath());
+        Map<String, Object> result;
+        boolean needSave = false;
+
+        if (!configFile.exists()) {
+          log.info("系统配置文件不存在，创建默认配置: {}", getConfigFilePath());
           result = getDefaultConfig();
           needSave = true;
         } else {
-          @SuppressWarnings("unchecked")
-          Map<String, Object> config = objectMapper.readValue(content, Map.class);
-
-          // 获取默认配置
-          result = getDefaultConfig();
-
-          // 递归合并配置（修复嵌套 Map 合并问题）
-          deepMerge(result, config);
-          if (removeDeprecatedAiPrompt(result)) {
-            needSave = true;
-          }
-
-          // 记录实际读取的配置值
-          logConfigValues(result);
-
-          // 检查是否缺少必要字段
-          if (!config.containsKey("mediaExtensions")) {
-            log.info("系统配置中缺少mediaExtensions字段，添加默认配置");
-            needSave = true;
-          }
-          if (!config.containsKey("tmdb")) {
-            log.info("系统配置中缺少tmdb字段，添加默认配置");
-            needSave = true;
-          }
-          if (!config.containsKey("scraping")) {
-            log.info("系统配置中缺少scraping字段，添加默认配置");
-            needSave = true;
-          }
-          if (!config.containsKey("scrapingRegex")) {
-            log.info("系统配置中缺少scrapingRegex字段，添加默认配置");
-            needSave = true;
-          }
-          if (!config.containsKey("log")) {
-            log.info("系统配置中缺少log字段，添加默认配置");
+          String content = Files.readString(Paths.get(getConfigFilePath()));
+          if (content.trim().isEmpty()) {
+            result = getDefaultConfig();
             needSave = true;
           } else {
-            // 检查log配置的子字段
             @SuppressWarnings("unchecked")
-            Map<String, Object> logConfig = (Map<String, Object>) config.get("log");
-            if (logConfig != null) {
+            Map<String, Object> config = objectMapper.readValue(content, Map.class);
+            result = getDefaultConfig();
+            deepMerge(result, config);
+            if (removeDeprecatedAiPrompt(result)) {
+              needSave = true;
+            }
+            logConfigValues(result);
+
+            for (String requiredKey :
+                List.of("mediaExtensions", "tmdb", "scraping", "scrapingRegex", "log")) {
+              if (!config.containsKey(requiredKey)) {
+                log.info("系统配置中缺少{}字段，添加默认配置", requiredKey);
+                needSave = true;
+              }
+            }
+            Object logValue = config.get("log");
+            if (logValue instanceof Map<?, ?> rawLogConfig) {
+              @SuppressWarnings("unchecked")
+              Map<String, Object> logConfig = (Map<String, Object>) rawLogConfig;
               if (!logConfig.containsKey("reportUsageData")) {
                 log.info("系统配置中缺少log.reportUsageData字段，添加默认配置");
-                logConfig.put("reportUsageData", true);
                 needSave = true;
               }
             }
           }
         }
-      }
 
-      // 如果需要保存配置文件
-      if (needSave) {
-        saveSystemConfigInternal(result);
-      }
+        if (needSave) {
+          saveSystemConfigInternal(result);
+        }
 
-      return result;
-    } catch (Exception e) {
-      log.error("读取系统配置失败", e);
-      return getDefaultConfig();
+        cachedConfig = immutableSnapshot(result);
+        return cachedConfig;
+      } catch (Exception e) {
+        log.error("读取系统配置失败", e);
+        cachedConfig = immutableSnapshot(getDefaultConfig());
+        return cachedConfig;
+      }
     }
   }
 
@@ -134,28 +125,53 @@ public class SystemConfigService {
    * @param config 配置Map
    */
   public void saveSystemConfig(Map<String, Object> config) {
-    try {
-      // 确保配置目录存在
-      createConfigDirectoryIfNotExists();
-
-      // 读取现有配置
-      Map<String, Object> existingConfig = getSystemConfig();
-
-      // 深度合并配置（递归合并嵌套的 Map）
-      deepMerge(existingConfig, config);
-      removeDeprecatedAiPrompt(existingConfig);
-
-      // 记录关键配置值
-      logConfigurationValues(existingConfig);
-
-      // 写入配置文件
-      saveSystemConfigInternal(existingConfig);
-
-      log.info("系统配置已保存到: {}", getConfigFilePath());
-    } catch (Exception e) {
-      log.error("保存系统配置失败", e);
-      throw new RuntimeException("保存系统配置失败", e);
+    synchronized (configLock) {
+      try {
+        createConfigDirectoryIfNotExists();
+        Map<String, Object> existingConfig = mutableCopy(getSystemConfig());
+        deepMerge(existingConfig, config);
+        removeDeprecatedAiPrompt(existingConfig);
+        logConfigurationValues(existingConfig);
+        saveSystemConfigInternal(existingConfig);
+        cachedConfig = immutableSnapshot(existingConfig);
+        log.info("系统配置已保存到: {}", getConfigFilePath());
+      } catch (Exception e) {
+        log.error("保存系统配置失败", e);
+        throw new RuntimeException("保存系统配置失败", e);
+      }
     }
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> mutableCopy(Map<String, Object> source) {
+    Map<String, Object> copy = new LinkedHashMap<>();
+    source.forEach(
+        (key, value) -> {
+          if (value instanceof Map<?, ?> mapValue) {
+            copy.put(key, mutableCopy((Map<String, Object>) mapValue));
+          } else if (value instanceof List<?> listValue) {
+            copy.put(key, new ArrayList<>(listValue));
+          } else {
+            copy.put(key, value);
+          }
+        });
+    return copy;
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> immutableSnapshot(Map<String, Object> source) {
+    Map<String, Object> copy = new LinkedHashMap<>();
+    source.forEach(
+        (key, value) -> {
+          if (value instanceof Map<?, ?> mapValue) {
+            copy.put(key, immutableSnapshot((Map<String, Object>) mapValue));
+          } else if (value instanceof List<?> listValue) {
+            copy.put(key, List.copyOf(listValue));
+          } else {
+            copy.put(key, value);
+          }
+        });
+    return Collections.unmodifiableMap(copy);
   }
 
   /**

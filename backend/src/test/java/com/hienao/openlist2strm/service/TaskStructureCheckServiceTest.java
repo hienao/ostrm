@@ -49,7 +49,7 @@ class TaskStructureCheckServiceTest {
     OpenlistConfig openlistConfig = new OpenlistConfig().setId(3L);
     when(taskConfigService.getById(7L)).thenReturn(task);
     when(openlistConfigService.getById(3L)).thenReturn(openlistConfig);
-    when(openlistApiService.getAllFilesRecursively(openlistConfig, "/movies"))
+    when(openlistApiService.getAllFilesRecursively(openlistConfig, "/movies", true))
         .thenReturn(
             List.of(
                 file("root.mkv", "/movies/root.mkv"),
@@ -95,7 +95,7 @@ class TaskStructureCheckServiceTest {
     OpenlistConfig openlistConfig = new OpenlistConfig().setId(3L);
     when(taskConfigService.getById(7L)).thenReturn(task);
     when(openlistConfigService.getById(3L)).thenReturn(openlistConfig);
-    when(openlistApiService.getDirectoryContents(openlistConfig, "/movies"))
+    when(openlistApiService.getDirectoryContents(openlistConfig, "/movies", true))
         .thenReturn(
             List.of(
                 folder("Zulu", "/movies/Zulu"),
@@ -109,7 +109,7 @@ class TaskStructureCheckServiceTest {
     assertEquals(2, result.getDirectories().size());
     assertEquals("Alpha", result.getDirectories().get(0).getName());
     assertEquals(1, result.getRootFilesResult().getInvalidFileCount());
-    verify(openlistApiService).getDirectoryContents(openlistConfig, "/movies");
+    verify(openlistApiService).getDirectoryContents(openlistConfig, "/movies", true);
     verify(openlistApiService, never())
         .getAllFilesRecursively(org.mockito.ArgumentMatchers.any(), anyString());
   }
@@ -120,7 +120,7 @@ class TaskStructureCheckServiceTest {
     OpenlistConfig openlistConfig = new OpenlistConfig().setId(3L);
     when(taskConfigService.getById(7L)).thenReturn(task);
     when(openlistConfigService.getById(3L)).thenReturn(openlistConfig);
-    when(openlistApiService.getAllFilesRecursively(openlistConfig, "/movies/Deep Movie"))
+    when(openlistApiService.getAllFilesRecursively(openlistConfig, "/movies/Deep Movie", true))
         .thenReturn(List.of(file("extra.mkv", "/movies/Deep Movie/Extras/extra.mkv")));
     when(strmFileService.isVideoFile("extra.mkv")).thenReturn(true);
 
@@ -129,7 +129,7 @@ class TaskStructureCheckServiceTest {
     assertEquals(1, result.getInvalidFileCount());
     assertEquals("Deep Movie", result.getTree().getName());
     assertEquals("Extras", result.getTree().getChildren().get(0).getName());
-    verify(openlistApiService).getAllFilesRecursively(openlistConfig, "/movies/Deep Movie");
+    verify(openlistApiService).getAllFilesRecursively(openlistConfig, "/movies/Deep Movie", true);
   }
 
   @Test

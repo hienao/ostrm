@@ -49,7 +49,7 @@ public class TaskStructureCheckService {
 
     OpenlistConfig openlistConfig = requireOpenlistConfig(task);
     List<OpenlistApiService.OpenlistFile> entries =
-        openlistApiService.getDirectoryContents(openlistConfig, task.getPath());
+        openlistApiService.getDirectoryContents(openlistConfig, task.getPath(), true);
     List<DirectoryItem> directories =
         entries.stream()
             .filter(entry -> "folder".equals(entry.getType()))
@@ -93,7 +93,7 @@ public class TaskStructureCheckService {
     OpenlistConfig openlistConfig = requireOpenlistConfig(task);
     log.info("开始检查任务第一层子目录: taskId={}, directory={}", taskId, normalizedDirectory);
     List<OpenlistApiService.OpenlistFile> entries =
-        openlistApiService.getAllFilesRecursively(openlistConfig, normalizedDirectory);
+        openlistApiService.getAllFilesRecursively(openlistConfig, normalizedDirectory, true);
     TaskStructureCheckResult result =
         checkEntries(
             task,
@@ -136,7 +136,7 @@ public class TaskStructureCheckService {
 
     log.info("开始检查任务目录结构: taskId={}, path={}", taskId, task.getPath());
     List<OpenlistApiService.OpenlistFile> entries =
-        openlistApiService.getAllFilesRecursively(openlistConfig, task.getPath());
+        openlistApiService.getAllFilesRecursively(openlistConfig, task.getPath(), true);
     TaskStructureCheckResult result =
         checkEntries(task, libraryType, expectedStructure, task.getPath(), entries.size(), entries);
     log.info(

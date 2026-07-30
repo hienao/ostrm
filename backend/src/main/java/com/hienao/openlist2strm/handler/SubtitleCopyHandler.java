@@ -1,13 +1,13 @@
 package com.hienao.openlist2strm.handler;
 
 import com.hienao.openlist2strm.handler.context.FileProcessingContext;
+import com.hienao.openlist2strm.handler.context.TaskScrapingSession;
 import com.hienao.openlist2strm.service.OpenlistApiService;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
@@ -38,9 +38,6 @@ public class SubtitleCopyHandler implements FileProcessorHandler {
   private final FilePriorityResolver priorityResolver;
   private final OpenlistApiService openlistApiService;
 
-  /** 已下载的字幕文件集合（用于防止重复下载） */
-  private final Set<String> downloadedSubtitles = new HashSet<>();
-
   // ==================== 支持的字幕文件扩展名 ====================
 
   private static final Set<String> SUBTITLE_EXTENSIONS =
@@ -65,6 +62,10 @@ public class SubtitleCopyHandler implements FileProcessorHandler {
               .getCurrentFile()
               .getPath()
               .substring(0, context.getCurrentFile().getPath().lastIndexOf('/') + 1);
+      TaskScrapingSession session = context.getAttribute("scrapingSession");
+      if (session != null && session.processedSubtitleDirectories().contains(currentDirectory)) {
+        return ProcessingResult.SKIPPED;
+      }
 
       java.util.List<OpenlistApiService.OpenlistFile> allDirectoryFiles =
           context.getDirectoryFiles();
@@ -74,16 +75,12 @@ public class SubtitleCopyHandler implements FileProcessorHandler {
               .filter(f -> "file".equals(f.getType()))
               .filter(f -> isSubtitleFile(f.getName()))
               .filter(f -> f.getPath().startsWith(currentDirectory))
-              .filter(
-                  f -> {
-                    String fileName = f.getName();
-                    return !downloadedSubtitles.contains(fileName.toLowerCase());
-                  })
-              .collect(Collectors.toList());
+              .toList();
 
       log.debug("找到 {} 个字幕文件", subtitleFiles.size());
 
       if (subtitleFiles.isEmpty()) {
+        markDirectoryProcessed(session, currentDirectory);
         log.debug("没有需要处理的字幕文件");
         context.getStats().incrementSkipped();
         return ProcessingResult.SKIPPED;
@@ -93,10 +90,10 @@ public class SubtitleCopyHandler implements FileProcessorHandler {
       int successCount = 0;
       for (OpenlistApiService.OpenlistFile subtitleFile : subtitleFiles) {
         if (copySubtitleFile(context, subtitleFile)) {
-          downloadedSubtitles.add(subtitleFile.getName().toLowerCase());
           successCount++;
         }
       }
+      markDirectoryProcessed(session, currentDirectory);
 
       if (successCount > 0) {
         log.info("成功复制 {} 个字幕文件", successCount);
@@ -133,7 +130,6 @@ public class SubtitleCopyHandler implements FileProcessorHandler {
       Path localPath = Paths.get(saveDirectory, fileName);
       if (Files.exists(localPath)) {
         log.debug("本地字幕文件已存在，跳过: {}", fileName);
-        downloadedSubtitles.add(fileName.toLowerCase());
         return true;
       }
 
@@ -146,16 +142,9 @@ public class SubtitleCopyHandler implements FileProcessorHandler {
       downloadUrl = com.hienao.openlist2strm.util.UrlEncoder.encodeUrlSmart(downloadUrl);
 
       // 3. 从 OpenList 下载
-      byte[] content =
-          openlistApiService.downloadWithEncodedUrl(
-              context.getOpenlistConfig(), subtitleFile, downloadUrl);
-
-      if (content != null && content.length > 0) {
-        // 4. 保存到本地
-        Files.createDirectories(localPath.getParent());
-        Files.write(localPath, content);
-
-        log.info("已复制字幕文件: {} -> {} (大小: {} bytes)", fileName, localPath, content.length);
+      if (openlistApiService.downloadToFile(
+          context.getOpenlistConfig(), subtitleFile, downloadUrl, localPath)) {
+        log.info("已复制字幕文件: {} -> {}", fileName, localPath);
         return true;
       }
 
@@ -197,13 +186,9 @@ public class SubtitleCopyHandler implements FileProcessorHandler {
     return new HashSet<>(SUBTITLE_EXTENSIONS);
   }
 
-  /** 清空已下载字幕文件记录（用于新任务开始时） */
-  public void clearDownloadedSubtitles() {
-    downloadedSubtitles.clear();
-  }
-
-  /** 获取已下载字幕文件数量 */
-  public int getDownloadedSubtitleCount() {
-    return downloadedSubtitles.size();
+  private void markDirectoryProcessed(TaskScrapingSession session, String directory) {
+    if (session != null) {
+      session.processedSubtitleDirectories().add(directory);
+    }
   }
 }

@@ -47,6 +47,20 @@ class OpenlistApiServiceRateLimitTest {
   }
 
   @Test
+  void directoryListPassesForcedRefreshToOpenlist() {
+    when(restTemplate.exchange(
+            anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+        .thenReturn(ResponseEntity.ok("{\"code\":200,\"data\":{\"content\":[]}}"));
+
+    service.getDirectoryContents(config, "/movies", true);
+
+    ArgumentCaptor<HttpEntity<String>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate)
+        .exchange(anyString(), eq(HttpMethod.POST), entityCaptor.capture(), eq(String.class));
+    assertTrue(entityCaptor.getValue().getBody().contains("\"refresh\":true"));
+  }
+
+  @Test
   void pathValidationAcquiresRateLimitPermit() {
     when(restTemplate.exchange(
             anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
