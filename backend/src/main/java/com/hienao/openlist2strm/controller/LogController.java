@@ -20,6 +20,7 @@ package com.hienao.openlist2strm.controller;
 
 import com.hienao.openlist2strm.dto.ApiResponse;
 import com.hienao.openlist2strm.dto.FrontendLogRequest;
+import com.hienao.openlist2strm.dto.LogReadResponse;
 import com.hienao.openlist2strm.service.LogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -73,6 +74,23 @@ public class LogController {
     } catch (Exception e) {
       log.error("获取日志失败", e);
       return ApiResponse.error(500, "获取日志失败: " + e.getMessage());
+    }
+  }
+
+  @Operation(summary = "增量获取日志", description = "首次获取日志尾部，后续根据游标仅读取新增内容（无需认证）")
+  @GetMapping("/{logType}/tail")
+  public ApiResponse<LogReadResponse> getLogTail(
+      @Parameter(description = "日志类型", example = "backend") @PathVariable String logType,
+      @Parameter(description = "上次读取到的字节游标") @RequestParam(required = false) Long cursor,
+      @Parameter(description = "上次读取的文件标识") @RequestParam(required = false) String fileKey,
+      @Parameter(description = "首次加载或重置时获取的最大行数") @RequestParam(defaultValue = "1000") int lines) {
+    try {
+      return ApiResponse.success(logService.readLogChunk(logType, cursor, fileKey, lines));
+    } catch (IllegalArgumentException e) {
+      return ApiResponse.error(400, e.getMessage());
+    } catch (Exception e) {
+      log.error("增量获取日志失败", e);
+      return ApiResponse.error(500, "增量获取日志失败: " + e.getMessage());
     }
   }
 
@@ -177,7 +195,7 @@ public class LogController {
     }
   }
 
-  @Operation(summary = "删除日志文件", description = "删除指定类型的日志文件（无需认证）")
+  @Operation(summary = "清空日志文件", description = "清空指定类型的日志文件并继续接收新日志（无需认证）")
   @ApiResponses(
       value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -195,14 +213,14 @@ public class LogController {
   public ApiResponse<String> deleteLog(
       @Parameter(description = "日志类型", example = "backend") @PathVariable String logType) {
     try {
-      logService.deleteLogFile(logType);
-      return ApiResponse.success("删除成功");
+      logService.clearLogFile(logType);
+      return ApiResponse.success("清空成功");
     } catch (IllegalArgumentException e) {
-      log.warn("删除日志失败，参数错误: {}", e.getMessage());
+      log.warn("清空日志失败，参数错误: {}", e.getMessage());
       return ApiResponse.error(400, e.getMessage());
     } catch (Exception e) {
-      log.error("删除日志失败", e);
-      return ApiResponse.error(500, "删除日志失败: " + e.getMessage());
+      log.error("清空日志失败", e);
+      return ApiResponse.error(500, "清空日志失败: " + e.getMessage());
     }
   }
 }
