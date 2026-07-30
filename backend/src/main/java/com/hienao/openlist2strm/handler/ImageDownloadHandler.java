@@ -108,7 +108,7 @@ public class ImageDownloadHandler implements FileProcessorHandler {
     if (openlistImage != null) {
       try {
         if (openlistApiService.downloadToFile(
-            context.getOpenlistConfig(), openlistImage, localPath, false)) {
+            context.getOpenlistConfig(), openlistImage, localPath)) {
           log.info("从 OpenList 下载{}文件成功: {}", description, imageFileName);
           context.getStats().incrementProcessed();
           return ProcessingResult.SUCCESS;
@@ -278,7 +278,7 @@ public class ImageDownloadHandler implements FileProcessorHandler {
     if (openlistFile != null) {
       try {
         if (openlistApiService.downloadToFile(
-            context.getOpenlistConfig(), openlistFile, localPath, false)) {
+            context.getOpenlistConfig(), openlistFile, localPath)) {
           log.info("从 OpenList 下载共用文件成功: {}", fileName);
         }
       } catch (Exception e) {
