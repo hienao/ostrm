@@ -101,6 +101,9 @@ public class LogCleanupJob implements Job {
 
       for (File logFile : logFiles) {
         if (logFile.isFile() && isLogFile(logFile.getName())) {
+          if (isActiveLogFile(logFile.getName())) {
+            continue;
+          }
           // 检查文件最后修改时间
           if (logFile.lastModified() < cutoffMillis) {
             long fileSize = logFile.length();
@@ -148,5 +151,12 @@ public class LogCleanupJob implements Job {
         || (lowerFileName.startsWith("spring") && lowerFileName.contains(".log"))
         || (lowerFileName.startsWith("error") && lowerFileName.contains(".log"))
         || (lowerFileName.startsWith("access") && lowerFileName.contains(".log"));
+  }
+
+  private boolean isActiveLogFile(String fileName) {
+    String lowerFileName = fileName.toLowerCase();
+    return lowerFileName.equals("backend.log")
+        || lowerFileName.equals("error.log")
+        || lowerFileName.equals("frontend.log");
   }
 }

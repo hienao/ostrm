@@ -199,6 +199,9 @@ public class ApplicationStartupListener implements ApplicationListener<Applicati
         if (logFile.isFile()) {
           log.debug("检查文件: {}, 是否为日志文件: {}", logFile.getName(), isLogFile(logFile.getName()));
           if (isLogFile(logFile.getName())) {
+            if (isActiveLogFile(logFile.getName())) {
+              continue;
+            }
             long fileModifiedTime = logFile.lastModified();
             LocalDateTime fileModifiedDateTime =
                 LocalDateTime.ofInstant(
@@ -263,5 +266,12 @@ public class ApplicationStartupListener implements ApplicationListener<Applicati
         || (lowerFileName.startsWith("access") && lowerFileName.contains(".log"))
         || (lowerFileName.startsWith("backend") && lowerFileName.contains(".log"))
         || (lowerFileName.startsWith("frontend") && lowerFileName.contains(".log"));
+  }
+
+  private boolean isActiveLogFile(String fileName) {
+    String lowerFileName = fileName.toLowerCase();
+    return lowerFileName.equals("backend.log")
+        || lowerFileName.equals("error.log")
+        || lowerFileName.equals("frontend.log");
   }
 }
