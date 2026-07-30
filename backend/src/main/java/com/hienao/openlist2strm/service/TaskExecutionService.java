@@ -18,6 +18,7 @@
 
 package com.hienao.openlist2strm.service;
 
+import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
@@ -25,12 +26,14 @@ import com.hienao.openlist2strm.handler.FileProcessorChain;
 import com.hienao.openlist2strm.handler.ProcessingResult;
 import com.hienao.openlist2strm.handler.context.FileProcessingContext;
 import com.hienao.openlist2strm.handler.context.TaskScrapingSession;
+import com.hienao.openlist2strm.util.TaskDirectoryStructureValidator;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -49,6 +52,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class TaskExecutionService {
+
+  private static final int MAX_INVALID_STRUCTURE_LOGS = 20;
 
   private final TaskConfigService taskConfigService;
   private final OpenlistConfigService openlistConfigService;
@@ -226,17 +231,27 @@ public class TaskExecutionService {
             .taskConfig(taskConfig)
             .build();
 
-    // 保存原始文件列表，用于 OrphanCleanupHandler 进行孤立文件检查
-    context.setAttribute("originalFiles", allFiles);
-    context.setAttribute("discoveredFiles", allFiles);
     context.getStats().setTotalFiles(allFiles.size());
 
     // 5. 过滤出视频文件
-    List<OpenlistApiService.OpenlistFile> allVideoFiles =
+    List<OpenlistApiService.OpenlistFile> discoveredVideoFiles =
         allFiles.stream()
             .filter(f -> "file".equals(f.getType()))
             .filter(f -> strmFileService.isVideoFile(f.getName()))
             .toList();
+    StructureFilterResult structureFilter =
+        filterVideoFilesByStructure(taskConfig, discoveredVideoFiles);
+    List<OpenlistApiService.OpenlistFile> allVideoFiles = structureFilter.eligibleVideoFiles();
+    List<OpenlistApiService.OpenlistFile> effectiveFiles =
+        structureFilter.skippedVideoPaths().isEmpty()
+            ? allFiles
+            : allFiles.stream()
+                .filter(file -> !structureFilter.skippedVideoPaths().contains(file.getPath()))
+                .toList();
+
+    // 保存过滤后的有效文件列表，用于增量清单和孤立 STRM 清理
+    context.setAttribute("originalFiles", effectiveFiles);
+    context.setAttribute("discoveredFiles", effectiveFiles);
 
     // 6. 获取本次任务的不可变配置快照，并为目录内资源建立索引
     Map<String, Object> systemConfig = systemConfigService.getSystemConfig();
@@ -250,7 +265,7 @@ public class TaskExecutionService {
         manifestConfigurationFingerprint(taskConfig, openlistConfig, systemConfig);
     TaskManifestService.ChangeSet changeSet =
         taskManifestService.detectChanges(
-            taskConfig.getId(), taskConfig.getPath(), manifestFingerprint, allFiles);
+            taskConfig.getId(), taskConfig.getPath(), manifestFingerprint, effectiveFiles);
     List<OpenlistApiService.OpenlistFile> videoFiles =
         !isIncrement
             ? allVideoFiles
@@ -318,7 +333,7 @@ public class TaskExecutionService {
       int cleanedCount =
           strmFileService.cleanOrphanedStrmFiles(
               taskConfig.getStrmPath(),
-              allFiles,
+              effectiveFiles,
               taskConfig.getPath(),
               taskConfig.getRenameRegex(),
               openlistConfig);
@@ -326,7 +341,7 @@ public class TaskExecutionService {
     }
     if (failedCount == 0) {
       taskManifestService.save(
-          taskConfig.getId(), taskConfig.getPath(), manifestFingerprint, allFiles);
+          taskConfig.getId(), taskConfig.getPath(), manifestFingerprint, effectiveFiles);
     } else {
       log.warn("本轮有 {} 个视频处理失败，不更新增量清单", failedCount);
     }
@@ -424,10 +439,61 @@ public class TaskExecutionService {
             taskConfig.getRenameRegex(),
             taskConfig.getNeedScrap(),
             taskConfig.getLibraryType(),
+            taskConfig.getSkipInvalidStructure(),
             openlistConfig.getStrmBaseUrl(),
             openlistConfig.getEnableUrlEncoding(),
             systemConfig));
   }
+
+  StructureFilterResult filterVideoFilesByStructure(
+      TaskConfig taskConfig, List<OpenlistApiService.OpenlistFile> videoFiles) {
+    if (!Boolean.TRUE.equals(taskConfig.getSkipInvalidStructure()) || videoFiles.isEmpty()) {
+      return new StructureFilterResult(videoFiles, Set.of());
+    }
+
+    MediaLibraryType libraryType = MediaLibraryType.from(taskConfig.getLibraryType());
+    if (libraryType == MediaLibraryType.AUTO) {
+      log.info("任务已启用目录结构过滤，但自动识别类型没有固定结构，跳过过滤: {}", taskConfig.getTaskName());
+      return new StructureFilterResult(videoFiles, Set.of());
+    }
+
+    List<OpenlistApiService.OpenlistFile> eligibleFiles = new ArrayList<>();
+    java.util.LinkedHashSet<String> skippedPaths = new java.util.LinkedHashSet<>();
+    Map<String, Integer> reasonCounts = new java.util.LinkedHashMap<>();
+    for (OpenlistApiService.OpenlistFile file : videoFiles) {
+      String relativePath =
+          strmFileService.calculateRelativePath(taskConfig.getPath(), file.getPath());
+      java.util.Optional<String> reason =
+          TaskDirectoryStructureValidator.validate(relativePath, libraryType);
+      if (reason.isEmpty()) {
+        eligibleFiles.add(file);
+        continue;
+      }
+      skippedPaths.add(file.getPath());
+      reasonCounts.merge(reason.get(), 1, Integer::sum);
+      if (skippedPaths.size() <= MAX_INVALID_STRUCTURE_LOGS) {
+        log.warn("跳过目录结构不符合要求的视频: {}, 原因: {}", file.getPath(), reason.get());
+      }
+    }
+    if (skippedPaths.size() > MAX_INVALID_STRUCTURE_LOGS) {
+      log.warn(
+          "目录结构异常视频较多，仅记录前 {} 个文件，另外 {} 个请在目录结构检查页面查看",
+          MAX_INVALID_STRUCTURE_LOGS,
+          skippedPaths.size() - MAX_INVALID_STRUCTURE_LOGS);
+    }
+
+    log.info(
+        "目录结构执行过滤完成: 类型={}, 视频总数={}, 合规={}, 跳过={}, 原因统计={}",
+        libraryType.value(),
+        videoFiles.size(),
+        eligibleFiles.size(),
+        skippedPaths.size(),
+        reasonCounts);
+    return new StructureFilterResult(List.copyOf(eligibleFiles), Set.copyOf(skippedPaths));
+  }
+
+  record StructureFilterResult(
+      List<OpenlistApiService.OpenlistFile> eligibleVideoFiles, Set<String> skippedVideoPaths) {}
 
   /** 移除文件扩展名 */
   private String removeExtension(String fileName) {

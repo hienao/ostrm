@@ -40,6 +40,9 @@ public class TaskConfigDto {
       message = "媒体库类型必须是 auto、movie、tv 或 anime")
   private String libraryType;
 
+  /** 是否跳过目录结构不符合当前媒体库类型的视频 */
+  private Boolean skipInvalidStructure;
+
   /** 重命名正则表达式，为空时表示不需要重命名 */
   @Size(max = 500, message = "重命名正则表达式长度不能超过500个字符") private String renameRegex;
 
