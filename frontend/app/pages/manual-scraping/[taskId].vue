@@ -85,6 +85,7 @@
               :node="treeResult.tree"
               :selected-path="selectedDirectory?.path"
               @select="selectDirectory"
+              @load-children="loadDirectoryChildren"
             />
           </div>
         </section>
@@ -108,7 +109,11 @@
             <p class="font-medium text-white/75">{{ selectedDirectory.name }}</p>
             <p class="mt-2 break-all font-mono text-xs text-white/35">{{ selectedDirectory.path }}</p>
             <p class="mt-4 text-sm text-white/45">
-              共 {{ selectedDirectory.videoFileCount }} 个媒体文件，点击“识别并预览”继续
+              <template v-if="selectedDirectory.childrenLoaded">
+                本层有 {{ selectedDirectory.videoFileCount }} 个媒体文件
+              </template>
+              <template v-else>该目录尚未展开</template>
+              ，点击“识别并预览”后将扫描所选目录
             </p>
           </div>
         </div>
@@ -334,7 +339,7 @@ const isJobActive = computed(() =>
 const isJobFailed = computed(() => scrapingJob.value?.status === 'FAILED')
 const isJobSucceeded = computed(() => scrapingJob.value?.status === 'SUCCEEDED')
 const canPreview = computed(() =>
-  !isJobActive.value && selectedDirectory.value && selectedDirectory.value.videoFileCount > 0
+  !isJobActive.value && selectedDirectory.value
 )
 const isTaskRoot = computed(() =>
   selectedDirectory.value?.path === treeResult.value?.rootPath
@@ -398,6 +403,27 @@ const selectDirectory = (node) => {
   manualYear.value = ''
   manualTmdbId.value = ''
   showManualSearch.value = false
+}
+
+const loadDirectoryChildren = async (node) => {
+  if (isJobActive.value || node.loading || node.childrenLoaded) return
+  node.loading = true
+  try {
+    const query = new URLSearchParams({ directoryPath: node.path })
+    const response = await authenticatedApiCall(
+      `/task-config/${taskId}/manual-scraping/tree/children?${query.toString()}`,
+      { method: 'GET' }
+    )
+    if (response.code !== 200) throw new Error(response.message || '子目录读取失败')
+    node.children = response.data.children || []
+    node.videoFileCount = response.data.videoFileCount || 0
+    node.childrenLoaded = true
+  } catch (error) {
+    logger.error('加载手动刮削子目录失败:', error)
+    previewError.value = error.message || '子目录读取失败'
+  } finally {
+    node.loading = false
+  }
 }
 
 const loadPreview = async (manual = false) => {
