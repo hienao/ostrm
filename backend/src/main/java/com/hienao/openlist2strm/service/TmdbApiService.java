@@ -33,37 +33,52 @@ public class TmdbApiService {
 
   private final ObjectMapper objectMapper;
   private final SystemConfigService systemConfigService;
+  private volatile RestTemplate cachedRestTemplate;
+  private volatile String cachedClientConfigKey;
 
   /** 创建配置了代理的RestTemplate */
   private RestTemplate createRestTemplate() {
     Map<String, Object> tmdbConfig = systemConfigService.getTmdbConfig();
     String proxyHost = (String) tmdbConfig.get("proxyHost");
     String proxyPortStr = (String) tmdbConfig.get("proxyPort");
+    Integer timeout = (Integer) tmdbConfig.getOrDefault("timeout", 30);
+    String configKey = String.valueOf(proxyHost) + ":" + proxyPortStr + ":" + timeout;
 
-    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-
-    // 配置代理
-    if (proxyHost != null
-        && !proxyHost.trim().isEmpty()
-        && proxyPortStr != null
-        && !proxyPortStr.trim().isEmpty()) {
-      try {
-        int proxyPort = Integer.parseInt(proxyPortStr.trim());
-        Proxy proxy =
-            new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost.trim(), proxyPort));
-        factory.setProxy(proxy);
-        log.info("TMDB API 使用代理: {}:{}", proxyHost.trim(), proxyPort);
-      } catch (NumberFormatException e) {
-        log.warn("代理端口配置无效: {}, 将不使用代理", proxyPortStr);
-      }
+    RestTemplate current = cachedRestTemplate;
+    if (current != null && configKey.equals(cachedClientConfigKey)) {
+      return current;
     }
 
-    // 设置超时时间
-    Integer timeout = (Integer) tmdbConfig.getOrDefault("timeout", 30);
-    factory.setConnectTimeout(timeout * 1000);
-    factory.setReadTimeout(timeout * 1000);
+    synchronized (this) {
+      if (cachedRestTemplate != null && configKey.equals(cachedClientConfigKey)) {
+        return cachedRestTemplate;
+      }
 
-    return new RestTemplate(factory);
+      SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+
+      // 配置代理
+      if (proxyHost != null
+          && !proxyHost.trim().isEmpty()
+          && proxyPortStr != null
+          && !proxyPortStr.trim().isEmpty()) {
+        try {
+          int proxyPort = Integer.parseInt(proxyPortStr.trim());
+          Proxy proxy =
+              new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost.trim(), proxyPort));
+          factory.setProxy(proxy);
+          log.info("TMDB API 使用代理: {}:{}", proxyHost.trim(), proxyPort);
+        } catch (NumberFormatException e) {
+          log.warn("代理端口配置无效: {}, 将不使用代理", proxyPortStr);
+        }
+      }
+
+      factory.setConnectTimeout(timeout * 1000);
+      factory.setReadTimeout(timeout * 1000);
+
+      cachedRestTemplate = new RestTemplate(factory);
+      cachedClientConfigKey = configKey;
+      return cachedRestTemplate;
+    }
   }
 
   /** 获取API基础URL */
@@ -107,7 +122,7 @@ public class TmdbApiService {
           responseBody.length() > 1000
               ? responseBody.substring(0, 1000) + "... (truncated)"
               : responseBody;
-      log.info("TMDB API 响应体: {}", logBody);
+      log.debug("TMDB API 响应体: {}", logBody);
     }
   }
 

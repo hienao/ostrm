@@ -22,16 +22,21 @@ import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
 import com.hienao.openlist2strm.handler.FileProcessorChain;
+import com.hienao.openlist2strm.handler.ProcessingResult;
 import com.hienao.openlist2strm.handler.context.FileProcessingContext;
+import com.hienao.openlist2strm.handler.context.TaskScrapingSession;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 /**
@@ -51,8 +56,11 @@ public class TaskExecutionService {
   private final StrmFileService strmFileService;
   private final MediaScrapingService mediaScrapingService;
   private final SystemConfigService systemConfigService;
+  private final TaskManifestService taskManifestService;
   private final FileProcessorChain fileProcessorChain;
   private final Executor taskSubmitExecutor;
+  private final Object taskSubmissionLock = new Object();
+  private final Map<Long, CompletableFuture<Void>> activeTasks = new ConcurrentHashMap<>();
 
   /**
    * 提交任务到线程池执行
@@ -61,19 +69,7 @@ public class TaskExecutionService {
    * @param isIncrement 是否增量执行（可选参数）
    */
   public void submitTask(Long taskId, Boolean isIncrement) {
-    log.info("提交任务到线程池 - 任务ID: {}, 增量模式: {}", taskId, isIncrement);
-
-    // 使用线程池异步执行任务
-    taskSubmitExecutor.execute(
-        () -> {
-          try {
-            executeTaskSync(taskId, isIncrement);
-          } catch (Exception e) {
-            log.error("任务执行失败 - 任务ID: {}, 错误信息: {}", taskId, e.getMessage(), e);
-          }
-        });
-
-    log.info("任务已成功提交到线程池 - 任务ID: {}", taskId);
+    scheduleTask(taskId, isIncrement);
   }
 
   /**
@@ -135,53 +131,40 @@ public class TaskExecutionService {
    * @param isIncrement 是否增量执行（可选参数）
    * @return CompletableFuture<Void>
    */
-  @Async("taskSubmitExecutor")
   public CompletableFuture<Void> executeTask(Long taskId, Boolean isIncrement) {
-    try {
-      log.info(
-          "开始执行任务 - 任务ID: {}, 增量模式: {}, 线程: {}",
-          taskId,
-          isIncrement,
-          Thread.currentThread().getName());
+    return scheduleTask(taskId, isIncrement);
+  }
 
-      // 获取任务配置
-      TaskConfig taskConfig = taskConfigService.getById(taskId);
-      if (taskConfig == null) {
-        throw new BusinessException("任务配置不存在，ID: " + taskId);
+  private CompletableFuture<Void> scheduleTask(Long taskId, Boolean isIncrement) {
+    synchronized (taskSubmissionLock) {
+      CompletableFuture<Void> existing = activeTasks.get(taskId);
+      if (existing != null && !existing.isDone()) {
+        log.info("任务已在排队或执行中，忽略重复提交 - 任务ID: {}", taskId);
+        return existing;
       }
 
-      // 检查任务是否启用
-      if (!Boolean.TRUE.equals(taskConfig.getIsActive())) {
-        throw new BusinessException("任务已禁用，无法执行，ID: " + taskId);
+      CompletableFuture<Void> future = new CompletableFuture<>();
+      activeTasks.put(taskId, future);
+      try {
+        taskSubmitExecutor.execute(
+            () -> {
+              try {
+                executeTaskSync(taskId, isIncrement);
+                future.complete(null);
+              } catch (Exception e) {
+                future.completeExceptionally(e);
+              } finally {
+                activeTasks.remove(taskId, future);
+              }
+            });
+      } catch (RuntimeException e) {
+        activeTasks.remove(taskId, future);
+        future.completeExceptionally(e);
+        throw e;
       }
-
-      // 确定是否使用增量模式
-      boolean useIncrement;
-      if (isIncrement != null) {
-        // 如果传了参数，以传参为主
-        useIncrement = isIncrement;
-        log.info("使用传入的增量参数: {}", isIncrement);
-      } else {
-        // 如果没传参数，以任务配置为主
-        useIncrement = Boolean.TRUE.equals(taskConfig.getIsIncrement());
-        log.info("使用任务配置的增量参数: {}", useIncrement);
-      }
-
-      // 更新任务开始执行时间
-      taskConfigService.updateLastExecTime(taskId, LocalDateTime.now());
-
-      // 执行具体的任务逻辑
-      executeTaskLogic(taskConfig, useIncrement);
-
-      log.info(
-          "任务执行完成 - 任务ID: {}, 任务名称: {}, 增量模式: {}", taskId, taskConfig.getTaskName(), useIncrement);
-
-    } catch (Exception e) {
-      log.error("任务执行失败 - 任务ID: {}, 错误信息: {}", taskId, e.getMessage(), e);
-      throw new BusinessException("任务执行失败: " + e.getMessage(), e);
+      log.info("任务已成功提交到线程池 - 任务ID: {}, 增量模式: {}", taskId, isIncrement);
+      return future;
     }
-
-    return CompletableFuture.completedFuture(null);
   }
 
   /**
@@ -216,7 +199,12 @@ public class TaskExecutionService {
     List<OpenlistApiService.OpenlistFile> allFiles;
     try {
       log.info("开始获取 OpenList 文件列表: {}", taskConfig.getPath());
-      allFiles = openlistApiService.getAllFilesRecursively(openlistConfig, taskConfig.getPath());
+      allFiles =
+          openlistApiService.getAllFilesConcurrently(
+              openlistConfig,
+              taskConfig.getPath(),
+              false,
+              directoryReadConcurrency(openlistConfig));
     } catch (Exception e) {
       log.error("获取 OpenList 文件列表失败，终止任务执行，STRM 目录未受影响: {}", e.getMessage(), e);
       throw new BusinessException("获取 OpenList 文件列表失败，任务终止: " + e.getMessage(), e);
@@ -244,27 +232,74 @@ public class TaskExecutionService {
     context.getStats().setTotalFiles(allFiles.size());
 
     // 5. 过滤出视频文件
-    List<OpenlistApiService.OpenlistFile> videoFiles =
+    List<OpenlistApiService.OpenlistFile> allVideoFiles =
         allFiles.stream()
             .filter(f -> "file".equals(f.getType()))
             .filter(f -> strmFileService.isVideoFile(f.getName()))
             .toList();
 
-    // 6. 获取配置
-    Map<String, Object> scrapingConfig = systemConfigService.getScrapingConfig();
+    // 6. 获取本次任务的不可变配置快照，并为目录内资源建立索引
+    Map<String, Object> systemConfig = systemConfigService.getSystemConfig();
+    Map<String, Object> scrapingConfig = getNestedConfig(systemConfig, "scraping");
+    Map<String, Object> scrapingRegexConfig = getNestedConfig(systemConfig, "scrapingRegex");
+    Map<String, Object> tmdbConfig = getNestedConfig(systemConfig, "tmdb");
+    Map<String, Object> aiConfig = getNestedConfig(systemConfig, "ai");
     boolean needScrap = Boolean.TRUE.equals(taskConfig.getNeedScrap());
+    TaskScrapingSession scrapingSession = new TaskScrapingSession();
+    String manifestFingerprint =
+        manifestConfigurationFingerprint(taskConfig, openlistConfig, systemConfig);
+    TaskManifestService.ChangeSet changeSet =
+        taskManifestService.detectChanges(
+            taskConfig.getId(), taskConfig.getPath(), manifestFingerprint, allFiles);
+    List<OpenlistApiService.OpenlistFile> videoFiles =
+        !isIncrement
+            ? allVideoFiles
+            : allVideoFiles.stream()
+                .filter(
+                    file ->
+                        changeSet.changedDirectories().contains(parentDirectory(file.getPath()))
+                            || !strmFileExists(taskConfig, file))
+                .toList();
+    if (isIncrement) {
+      log.info(
+          "增量清单筛选完成: 总视频 {}, 本轮需处理 {}, 变化目录 {}",
+          allVideoFiles.size(),
+          videoFiles.size(),
+          changeSet.changedDirectories().size());
+    }
+    Map<String, List<OpenlistApiService.OpenlistFile>> filesByDirectory =
+        allFiles.stream()
+            .collect(
+                Collectors.groupingBy(
+                    file -> parentDirectory(file.getPath()),
+                    java.util.LinkedHashMap::new,
+                    Collectors.toList()));
 
     // 7. 处理每个视频文件
     int processedCount = 0;
     int scrapSkippedCount = 0;
+    int failedCount = 0;
 
     for (OpenlistApiService.OpenlistFile videoFile : videoFiles) {
       // 构建单个文件的上下文
       FileProcessingContext fileContext =
-          createFileContext(context, videoFile, openlistConfig, scrapingConfig);
+          createFileContext(
+              context,
+              videoFile,
+              openlistConfig,
+              scrapingConfig,
+              scrapingRegexConfig,
+              tmdbConfig,
+              aiConfig,
+              filesByDirectory,
+              scrapingSession,
+              isIncrement);
 
       // 执行处理器链
-      fileProcessorChain.execute(fileContext);
+      ProcessingResult processingResult = fileProcessorChain.execute(fileContext);
+      if (processingResult == ProcessingResult.FAILED) {
+        failedCount++;
+      }
 
       // 更新统计
       if (fileContext.getStats().getProcessedFiles() > 0) {
@@ -289,6 +324,12 @@ public class TaskExecutionService {
               openlistConfig);
       log.info("清理了 {} 个孤立的STRM文件", cleanedCount);
     }
+    if (failedCount == 0) {
+      taskManifestService.save(
+          taskConfig.getId(), taskConfig.getPath(), manifestFingerprint, allFiles);
+    } else {
+      log.warn("本轮有 {} 个视频处理失败，不更新增量清单", failedCount);
+    }
   }
 
   /** 创建单个文件的处理上下文 */
@@ -296,7 +337,13 @@ public class TaskExecutionService {
       FileProcessingContext parentContext,
       OpenlistApiService.OpenlistFile videoFile,
       OpenlistConfig openlistConfig,
-      Map<String, Object> scrapingConfig) {
+      Map<String, Object> scrapingConfig,
+      Map<String, Object> scrapingRegexConfig,
+      Map<String, Object> tmdbConfig,
+      Map<String, Object> aiConfig,
+      Map<String, List<OpenlistApiService.OpenlistFile>> filesByDirectory,
+      TaskScrapingSession scrapingSession,
+      boolean isIncrement) {
 
     // 计算相对路径
     String relativePath =
@@ -310,21 +357,20 @@ public class TaskExecutionService {
     // 获取基础文件名
     String baseFileName = removeExtension(videoFile.getName());
 
-    // 获取当前目录的所有文件
-    String currentDirectory =
-        videoFile.getPath().substring(0, videoFile.getPath().lastIndexOf('/') + 1);
-
-    List<OpenlistApiService.OpenlistFile> directoryFiles =
-        parentContext.getAttribute("discoveredFiles");
+    // 从任务级目录索引直接获取同级文件，避免为每个视频扫描完整文件列表
     List<OpenlistApiService.OpenlistFile> currentDirFiles =
-        directoryFiles.stream()
-            .filter(f -> f.getPath().startsWith(currentDirectory))
-            .filter(
-                f -> {
-                  String subPath = f.getPath().substring(currentDirectory.length());
-                  return subPath.isEmpty() || !subPath.contains("/");
-                })
-            .toList();
+        filesByDirectory.getOrDefault(parentDirectory(videoFile.getPath()), List.of());
+
+    Map<String, Object> attributes = new HashMap<>();
+    if (scrapingConfig != null) {
+      attributes.putAll(scrapingConfig);
+    }
+    attributes.put("scrapingConfig", scrapingConfig);
+    attributes.put("scrapingRegexConfig", scrapingRegexConfig);
+    attributes.put("tmdbConfig", tmdbConfig);
+    attributes.put("aiConfig", aiConfig);
+    attributes.put("scrapingSession", scrapingSession);
+    attributes.put("executionIncremental", isIncrement);
 
     return FileProcessingContext.builder()
         .openlistConfig(openlistConfig)
@@ -334,11 +380,53 @@ public class TaskExecutionService {
         .saveDirectory(saveDirectory)
         .baseFileName(baseFileName)
         .directoryFiles(currentDirFiles)
-        .attributes(
-            scrapingConfig != null
-                ? new java.util.HashMap<>(scrapingConfig)
-                : new java.util.HashMap<>())
+        .attributes(attributes)
         .build();
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> getNestedConfig(Map<String, Object> config, String key) {
+    Object value = config.get(key);
+    return value instanceof Map<?, ?> ? (Map<String, Object>) value : Map.of();
+  }
+
+  private String parentDirectory(String path) {
+    if (path == null || path.isBlank()) {
+      return "";
+    }
+    int slashIndex = path.lastIndexOf('/');
+    return slashIndex <= 0 ? "/" : path.substring(0, slashIndex);
+  }
+
+  private int directoryReadConcurrency(OpenlistConfig config) {
+    Integer qps = config.getFsApiQpsLimit();
+    return qps != null && qps > 0 ? Math.min(4, qps) : 4;
+  }
+
+  private boolean strmFileExists(
+      TaskConfig taskConfig, OpenlistApiService.OpenlistFile sourceFile) {
+    String relativePath =
+        strmFileService.calculateRelativePath(taskConfig.getPath(), sourceFile.getPath());
+    return java.nio.file.Files.exists(
+        strmFileService.resolveStrmFilePath(
+            taskConfig.getStrmPath(),
+            relativePath,
+            sourceFile.getName(),
+            taskConfig.getRenameRegex()));
+  }
+
+  private String manifestConfigurationFingerprint(
+      TaskConfig taskConfig, OpenlistConfig openlistConfig, Map<String, Object> systemConfig) {
+    return Integer.toHexString(
+        Objects.hash(
+            taskConfig.getPath(),
+            taskConfig.getStrmPath(),
+            taskConfig.getRenameRegex(),
+            taskConfig.getNeedScrap(),
+            taskConfig.getLibraryType(),
+            openlistConfig.getStrmBaseUrl(),
+            openlistConfig.getEnableUrlEncoding(),
+            systemConfig));
   }
 
   /** 移除文件扩展名 */

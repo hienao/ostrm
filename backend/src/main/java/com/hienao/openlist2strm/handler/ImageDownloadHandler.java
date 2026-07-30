@@ -107,13 +107,8 @@ public class ImageDownloadHandler implements FileProcessorHandler {
 
     if (openlistImage != null) {
       try {
-        byte[] content =
-            openlistApiService.getFileContent(context.getOpenlistConfig(), openlistImage, false);
-
-        if (content != null && content.length > 0) {
-          Files.createDirectories(localPath.getParent());
-          Files.write(localPath, content);
-
+        if (openlistApiService.downloadToFile(
+            context.getOpenlistConfig(), openlistImage, localPath, false)) {
           log.info("从 OpenList 下载{}文件成功: {}", description, imageFileName);
           context.getStats().incrementProcessed();
           return ProcessingResult.SUCCESS;
@@ -208,14 +203,8 @@ public class ImageDownloadHandler implements FileProcessorHandler {
       downloadUrl = com.hienao.openlist2strm.util.UrlEncoder.encodeUrlSmart(downloadUrl);
 
       // 从 OpenList 下载
-      byte[] content =
-          openlistApiService.downloadWithEncodedUrl(
-              context.getOpenlistConfig(), imageFile, downloadUrl);
-
-      if (content != null && content.length > 0) {
-        Files.createDirectories(localPath.getParent());
-        Files.write(localPath, content);
-
+      if (openlistApiService.downloadToFile(
+          context.getOpenlistConfig(), imageFile, downloadUrl, localPath)) {
         log.info("从 OpenList 下载任意命名图片文件成功: {} -> {}", fileName, localPath);
         return true;
       }
@@ -288,12 +277,8 @@ public class ImageDownloadHandler implements FileProcessorHandler {
 
     if (openlistFile != null) {
       try {
-        byte[] content =
-            openlistApiService.getFileContent(context.getOpenlistConfig(), openlistFile, false);
-
-        if (content != null && content.length > 0) {
-          Files.createDirectories(localPath.getParent());
-          Files.write(localPath, content);
+        if (openlistApiService.downloadToFile(
+            context.getOpenlistConfig(), openlistFile, localPath, false)) {
           log.info("从 OpenList 下载共用文件成功: {}", fileName);
         }
       } catch (Exception e) {
