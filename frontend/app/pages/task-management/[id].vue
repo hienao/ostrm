@@ -163,6 +163,10 @@
                 <input type="checkbox" :checked="task.isIncrement" disabled class="mr-2 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500">
                 增量更新
               </label>
+              <label class="flex items-center text-sm text-white/60">
+                <input type="checkbox" :checked="task.skipInvalidStructure" disabled class="mr-2 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500">
+                跳过异常目录
+              </label>
             </div>
 
             <div class="mt-3" v-if="task.renameRegex">
@@ -285,6 +289,24 @@
                   <span class="ml-2 text-sm text-white/70">
                     需要刮削
                     <span class="block text-xs text-white/40 mt-0.5">启用TMDB刮削功能，生成NFO和封面</span>
+                  </span>
+                </label>
+
+                <label
+                  class="flex items-start"
+                  :class="taskForm.libraryType === 'auto' || !taskForm.libraryType ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
+                >
+                  <input
+                    v-model="taskForm.skipInvalidStructure"
+                    type="checkbox"
+                    :disabled="taskForm.libraryType === 'auto' || !taskForm.libraryType"
+                    class="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500"
+                  >
+                  <span class="ml-2 text-sm text-white/70">
+                    跳过目录结构不符合的视频
+                    <span class="block text-xs text-white/40 mt-0.5">
+                      执行时不生成 STRM、也不刮削；增量任务会清理此前生成的异常文件
+                    </span>
                   </span>
                 </label>
 
@@ -558,6 +580,7 @@ const taskForm = ref({
   strmPath: '/app/backend/strm',
   cron: '',
   needScrap: false,
+  skipInvalidStructure: false,
   renameRegex: '',
   isIncrement: true,
   isActive: true
@@ -597,7 +620,8 @@ const fetchTasks = async () => {
 const resetTaskForm = () => {
   taskForm.value = {
     taskName: '', path: '', strmPath: '/app/backend/strm', cron: '',
-    libraryType: '', needScrap: false, renameRegex: '', isIncrement: true, isActive: true
+    libraryType: '', needScrap: false, skipInvalidStructure: false,
+    renameRegex: '', isIncrement: true, isActive: true
   }
   strmSubPath.value = ''
   showRenameRegexHelp.value = false
@@ -608,6 +632,7 @@ const editTask = (task) => {
   taskForm.value = {
     taskName: task.taskName, path: task.path, strmPath: task.strmPath,
     libraryType: task.libraryType || 'auto', cron: task.cron || '', needScrap: task.needScrap || false,
+    skipInvalidStructure: task.libraryType && task.libraryType !== 'auto' ? task.skipInvalidStructure || false : false,
     renameRegex: task.renameRegex || '', isIncrement: task.isIncrement, isActive: task.isActive
   }
   const prefix = '/app/backend/strm/'
@@ -637,7 +662,12 @@ const submitTask = async () => {
     submitting.value = true
     if (taskForm.value.path) await validateTaskPath(taskForm.value.path)
     const fullStrmPath = '/app/backend/strm/' + (strmSubPath.value || '')
-    const taskData = { ...taskForm.value, strmPath: fullStrmPath, openlistConfigId: parseInt(configId) }
+    const taskData = {
+      ...taskForm.value,
+      skipInvalidStructure: taskForm.value.libraryType === 'auto' ? false : taskForm.value.skipInvalidStructure,
+      strmPath: fullStrmPath,
+      openlistConfigId: parseInt(configId)
+    }
     let response
     if (showCreateTaskModal.value) {
       response = await authenticatedApiCall('/task-config', { method: 'POST', body: taskData })
