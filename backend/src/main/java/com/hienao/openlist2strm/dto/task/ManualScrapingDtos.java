@@ -30,6 +30,7 @@ public final class ManualScrapingDtos {
     private String name;
     private String path;
     private int videoFileCount;
+    private boolean childrenLoaded;
     @Builder.Default private List<DirectoryNode> children = new ArrayList<>();
   }
 

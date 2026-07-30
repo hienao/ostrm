@@ -59,26 +59,55 @@ public class ManualScrapingService {
 
   public DirectoryTree getDirectoryTree(Long taskId) {
     Context context = loadContext(taskId);
-    List<OpenlistApiService.OpenlistFile> entries =
-        openlistApiService.getAllFilesRecursively(
-            context.openlistConfig(), context.task().getPath());
-    MutableDirectory root =
-        new MutableDirectory(rootName(context.task()), normalizePath(context.task().getPath()));
-
-    for (OpenlistApiService.OpenlistFile entry : entries) {
-      if ("folder".equals(entry.getType())) {
-        ensureDirectory(root, context.task().getPath(), entry.getPath());
-      } else if ("file".equals(entry.getType()) && strmFileService.isVideoFile(entry.getName())) {
-        incrementVideoCounts(root, context.task().getPath(), entry.getPath());
-      }
-    }
+    DirectoryNode root =
+        loadDirectoryLevel(
+            context, normalizePath(context.task().getPath()), rootName(context.task()));
 
     return DirectoryTree.builder()
         .taskId(context.task().getId())
         .taskName(context.task().getTaskName())
         .libraryType(context.libraryType().value())
         .rootPath(normalizePath(context.task().getPath()))
-        .tree(toDto(root))
+        .tree(root)
+        .build();
+  }
+
+  public DirectoryNode getDirectoryChildren(Long taskId, String directoryPath) {
+    Context context = loadContext(taskId);
+    String selectedPath = requireTaskPath(context.task(), directoryPath);
+    return loadDirectoryLevel(context, selectedPath, lastSegment(selectedPath));
+  }
+
+  private DirectoryNode loadDirectoryLevel(Context context, String directoryPath, String name) {
+    List<OpenlistApiService.OpenlistFile> entries =
+        openlistApiService.getDirectoryContents(context.openlistConfig(), directoryPath);
+    int directVideoCount =
+        (int)
+            entries.stream()
+                .filter(entry -> "file".equals(entry.getType()))
+                .filter(entry -> strmFileService.isVideoFile(entry.getName()))
+                .count();
+    List<DirectoryNode> children =
+        entries.stream()
+            .filter(entry -> "folder".equals(entry.getType()))
+            .sorted(
+                Comparator.comparing(
+                    OpenlistApiService.OpenlistFile::getName, String.CASE_INSENSITIVE_ORDER))
+            .map(
+                entry ->
+                    DirectoryNode.builder()
+                        .name(entry.getName())
+                        .path(normalizePath(entry.getPath()))
+                        .videoFileCount(0)
+                        .childrenLoaded(false)
+                        .build())
+            .toList();
+    return DirectoryNode.builder()
+        .name(name)
+        .path(normalizePath(directoryPath))
+        .videoFileCount(directVideoCount)
+        .childrenLoaded(true)
+        .children(children)
         .build();
   }
 
@@ -859,48 +888,6 @@ public class ManualScrapingService {
     return result.startsWith("/") ? result : "/" + result;
   }
 
-  private void ensureDirectory(MutableDirectory root, String taskPath, String directoryPath) {
-    String relative = relativePath(taskPath, directoryPath);
-    MutableDirectory current = root;
-    String currentPath = root.path;
-    for (String segment : segments(relative)) {
-      currentPath = join(currentPath, segment);
-      String childPath = currentPath;
-      current =
-          current.children.computeIfAbsent(
-              segment, ignored -> new MutableDirectory(segment, childPath));
-    }
-  }
-
-  private void incrementVideoCounts(MutableDirectory root, String taskPath, String filePath) {
-    root.videoFileCount++;
-    String relativeParent = parentPath(relativePath(taskPath, filePath));
-    MutableDirectory current = root;
-    String currentPath = root.path;
-    for (String segment : segments(relativeParent)) {
-      currentPath = join(currentPath, segment);
-      String childPath = currentPath;
-      current =
-          current.children.computeIfAbsent(
-              segment, ignored -> new MutableDirectory(segment, childPath));
-      current.videoFileCount++;
-    }
-  }
-
-  private DirectoryNode toDto(MutableDirectory directory) {
-    List<DirectoryNode> children =
-        directory.children.values().stream()
-            .sorted(Comparator.comparing(child -> child.name, String.CASE_INSENSITIVE_ORDER))
-            .map(this::toDto)
-            .toList();
-    return DirectoryNode.builder()
-        .name(directory.name)
-        .path(directory.path)
-        .videoFileCount(directory.videoFileCount)
-        .children(new ArrayList<>(children))
-        .build();
-  }
-
   private String relativePath(String rootPath, String path) {
     String root = normalizePath(rootPath);
     String target = normalizePath(path);
@@ -912,15 +899,6 @@ public class ManualScrapingService {
 
   private String relativeParent(String rootPath, String filePath) {
     return parentPath(relativePath(rootPath, filePath));
-  }
-
-  private List<String> segments(String path) {
-    if (path == null || path.isBlank() || ".".equals(path) || "/".equals(path)) {
-      return List.of();
-    }
-    return List.of(path.replace('\\', '/').split("/")).stream()
-        .filter(segment -> !segment.isBlank() && !".".equals(segment))
-        .toList();
   }
 
   private String join(String parent, String child) {
@@ -1001,17 +979,5 @@ public class ManualScrapingService {
   @FunctionalInterface
   private interface UploadProgressListener {
     void uploaded(int uploaded, int total);
-  }
-
-  private static final class MutableDirectory {
-    private final String name;
-    private final String path;
-    private int videoFileCount;
-    private final Map<String, MutableDirectory> children = new LinkedHashMap<>();
-
-    private MutableDirectory(String name, String path) {
-      this.name = name;
-      this.path = path;
-    }
   }
 }

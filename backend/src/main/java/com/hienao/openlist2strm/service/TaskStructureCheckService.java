@@ -1,5 +1,7 @@
 package com.hienao.openlist2strm.service;
 
+import com.hienao.openlist2strm.dto.task.TaskStructureCheckOverview;
+import com.hienao.openlist2strm.dto.task.TaskStructureCheckOverview.DirectoryItem;
 import com.hienao.openlist2strm.dto.task.TaskStructureCheckResult;
 import com.hienao.openlist2strm.dto.task.TaskStructureCheckResult.StructureNode;
 import com.hienao.openlist2strm.entity.MediaLibraryType;
@@ -7,6 +9,7 @@ import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
 import com.hienao.openlist2strm.util.TaskDirectoryStructureValidator;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -28,11 +31,89 @@ public class TaskStructureCheckService {
   private final OpenlistApiService openlistApiService;
   private final StrmFileService strmFileService;
 
-  public TaskStructureCheckResult check(Long taskId) {
-    TaskConfig task = taskConfigService.getById(taskId);
-    if (task == null) {
-      throw new BusinessException("任务不存在，ID: " + taskId);
+  public TaskStructureCheckOverview getOverview(Long taskId) {
+    TaskConfig task = requireTask(taskId);
+    MediaLibraryType libraryType = MediaLibraryType.from(task.getLibraryType());
+    String expectedStructure = expectedStructure(libraryType);
+    if (libraryType == MediaLibraryType.AUTO) {
+      return TaskStructureCheckOverview.builder()
+          .taskId(task.getId())
+          .taskName(task.getTaskName())
+          .libraryType(libraryType.value())
+          .rootPath(task.getPath())
+          .expectedStructure(expectedStructure)
+          .supported(false)
+          .message("自动识别任务没有固定目录规范，请先把媒体库类型改为电影、电视剧或动画")
+          .build();
     }
+
+    OpenlistConfig openlistConfig = requireOpenlistConfig(task);
+    List<OpenlistApiService.OpenlistFile> entries =
+        openlistApiService.getDirectoryContents(openlistConfig, task.getPath());
+    List<DirectoryItem> directories =
+        entries.stream()
+            .filter(entry -> "folder".equals(entry.getType()))
+            .sorted(
+                Comparator.comparing(
+                    OpenlistApiService.OpenlistFile::getName, String.CASE_INSENSITIVE_ORDER))
+            .map(entry -> new DirectoryItem(entry.getName(), entry.getPath()))
+            .toList();
+    List<OpenlistApiService.OpenlistFile> rootFiles =
+        entries.stream().filter(entry -> "file".equals(entry.getType())).toList();
+    TaskStructureCheckResult rootFilesResult =
+        checkEntries(
+            task, libraryType, expectedStructure, task.getPath(), entries.size(), rootFiles);
+
+    return TaskStructureCheckOverview.builder()
+        .taskId(task.getId())
+        .taskName(task.getTaskName())
+        .libraryType(libraryType.value())
+        .rootPath(task.getPath())
+        .expectedStructure(expectedStructure)
+        .supported(true)
+        .message(directories.isEmpty() ? "任务根目录下没有可检查的第一层子目录" : "请选择第一层目录进行检查")
+        .rootFilesResult(rootFilesResult)
+        .directories(directories)
+        .build();
+  }
+
+  public TaskStructureCheckResult checkDirectory(Long taskId, String directoryPath) {
+    TaskConfig task = requireTask(taskId);
+    MediaLibraryType libraryType = MediaLibraryType.from(task.getLibraryType());
+    if (libraryType == MediaLibraryType.AUTO) {
+      throw new BusinessException("自动识别任务没有固定目录规范");
+    }
+    String normalizedRoot = normalizePath(task.getPath()).replaceAll("/+$", "");
+    String normalizedDirectory = normalizePath(directoryPath).replaceAll("/+$", "");
+    if (normalizedDirectory.equals(normalizedRoot)
+        || !parentPath(normalizedDirectory).equals(normalizedRoot)) {
+      throw new BusinessException("只能检查任务根目录下的第一层子目录");
+    }
+
+    OpenlistConfig openlistConfig = requireOpenlistConfig(task);
+    log.info("开始检查任务第一层子目录: taskId={}, directory={}", taskId, normalizedDirectory);
+    List<OpenlistApiService.OpenlistFile> entries =
+        openlistApiService.getAllFilesRecursively(openlistConfig, normalizedDirectory);
+    TaskStructureCheckResult result =
+        checkEntries(
+            task,
+            libraryType,
+            expectedStructure(libraryType),
+            normalizedDirectory,
+            entries.size(),
+            entries);
+    log.info(
+        "任务子目录结构检查完成: taskId={}, directory={}, entries={}, videos={}, invalid={}",
+        taskId,
+        normalizedDirectory,
+        result.getScannedEntryCount(),
+        result.getVideoFileCount(),
+        result.getInvalidFileCount());
+    return result;
+  }
+
+  public TaskStructureCheckResult check(Long taskId) {
+    TaskConfig task = requireTask(taskId);
 
     MediaLibraryType libraryType = MediaLibraryType.from(task.getLibraryType());
     String expectedStructure = expectedStructure(libraryType);
@@ -51,48 +132,73 @@ public class TaskStructureCheckService {
           root);
     }
 
-    OpenlistConfig openlistConfig = openlistConfigService.getById(task.getOpenlistConfigId());
-    if (openlistConfig == null) {
-      throw new BusinessException("任务关联的 OpenList 配置不存在");
-    }
+    OpenlistConfig openlistConfig = requireOpenlistConfig(task);
 
     log.info("开始检查任务目录结构: taskId={}, path={}", taskId, task.getPath());
     List<OpenlistApiService.OpenlistFile> entries =
         openlistApiService.getAllFilesRecursively(openlistConfig, task.getPath());
+    TaskStructureCheckResult result =
+        checkEntries(task, libraryType, expectedStructure, task.getPath(), entries.size(), entries);
+    log.info(
+        "任务目录结构检查完成: taskId={}, entries={}, videos={}, invalid={}",
+        taskId,
+        entries.size(),
+        result.getVideoFileCount(),
+        result.getInvalidFileCount());
+    return result;
+  }
+
+  private TaskStructureCheckResult checkEntries(
+      TaskConfig task,
+      MediaLibraryType libraryType,
+      String expectedStructure,
+      String checkedPath,
+      int scannedEntryCount,
+      List<OpenlistApiService.OpenlistFile> entries) {
+    MutableNode root = MutableNode.folder(rootName(checkedPath, task.getTaskName()), checkedPath);
     List<OpenlistApiService.OpenlistFile> videoFiles =
         entries.stream()
             .filter(file -> "file".equals(file.getType()))
             .filter(file -> strmFileService.isVideoFile(file.getName()))
             .toList();
-
     int invalidCount = 0;
     for (OpenlistApiService.OpenlistFile file : videoFiles) {
-      String relativePath = calculateRelativePath(task.getPath(), file.getPath());
-      Optional<String> reason = TaskDirectoryStructureValidator.validate(relativePath, libraryType);
+      String taskRelativePath = calculateRelativePath(task.getPath(), file.getPath());
+      Optional<String> reason =
+          TaskDirectoryStructureValidator.validate(taskRelativePath, libraryType);
       if (reason.isPresent()) {
         invalidCount++;
-        addInvalidFile(root, relativePath, reason.get());
+        addInvalidFile(root, calculateRelativePath(checkedPath, file.getPath()), reason.get());
       }
     }
-
     String message =
         invalidCount == 0 ? "目录结构检查通过，未发现异常视频文件" : "发现 " + invalidCount + " 个目录层级不符合要求的视频文件";
-    log.info(
-        "任务目录结构检查完成: taskId={}, entries={}, videos={}, invalid={}",
-        taskId,
-        entries.size(),
-        videoFiles.size(),
-        invalidCount);
     return buildResult(
         task,
         libraryType,
         expectedStructure,
         true,
-        entries.size(),
+        scannedEntryCount,
         videoFiles.size(),
         invalidCount,
         message,
         root);
+  }
+
+  private TaskConfig requireTask(Long taskId) {
+    TaskConfig task = taskConfigService.getById(taskId);
+    if (task == null) {
+      throw new BusinessException("任务不存在，ID: " + taskId);
+    }
+    return task;
+  }
+
+  private OpenlistConfig requireOpenlistConfig(TaskConfig task) {
+    OpenlistConfig openlistConfig = openlistConfigService.getById(task.getOpenlistConfigId());
+    if (openlistConfig == null) {
+      throw new BusinessException("任务关联的 OpenList 配置不存在");
+    }
+    return openlistConfig;
   }
 
   private TaskStructureCheckResult buildResult(
@@ -131,8 +237,17 @@ public class TaskStructureCheckService {
   }
 
   private String normalizePath(String path) {
-    String normalized = path.replace('\\', '/').replaceAll("/+", "/");
+    String normalized =
+        Paths.get(path.replace('\\', '/')).normalize().toString().replace('\\', '/');
     return normalized.startsWith("/") ? normalized : "/" + normalized;
+  }
+
+  private String parentPath(String path) {
+    int index = path.lastIndexOf('/');
+    if (index < 0) {
+      return "";
+    }
+    return index == 0 ? "/" : path.substring(0, index);
   }
 
   private void addInvalidFile(MutableNode root, String relativePath, String reason) {
@@ -180,8 +295,12 @@ public class TaskStructureCheckService {
   }
 
   private String rootName(TaskConfig task) {
-    List<String> segments = TaskDirectoryStructureValidator.splitPath(task.getPath());
-    return segments.isEmpty() ? task.getTaskName() : segments.get(segments.size() - 1);
+    return rootName(task.getPath(), task.getTaskName());
+  }
+
+  private String rootName(String path, String fallback) {
+    List<String> segments = TaskDirectoryStructureValidator.splitPath(path);
+    return segments.isEmpty() ? fallback : segments.get(segments.size() - 1);
   }
 
   private String expectedStructure(MediaLibraryType libraryType) {

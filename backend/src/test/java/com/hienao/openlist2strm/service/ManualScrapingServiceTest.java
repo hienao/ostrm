@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,27 +52,47 @@ class ManualScrapingServiceTest {
   }
 
   @Test
-  void buildsAllFoldersAndAggregatesVideoCounts() {
+  void loadsOnlyRootDirectoryLevelInitially() {
     stubMovieTask();
     OpenlistConfig config = openlistConfigService.getById(3L);
-    when(openlistApiService.getAllFilesRecursively(config, "/movies"))
+    when(openlistApiService.getDirectoryContents(config, "/movies"))
         .thenReturn(
             List.of(
                 entry("Movie A", "/movies/Movie A", "folder"),
-                entry("movie.mkv", "/movies/Movie A/movie.mkv", "file"),
-                entry("Extras", "/movies/Movie A/Extras", "folder"),
-                entry("trailer.mkv", "/movies/Movie A/Extras/trailer.mkv", "file"),
+                entry("root.mkv", "/movies/root.mkv", "file"),
                 entry("Empty", "/movies/Empty", "folder")));
     when(strmFileService.isVideoFile(anyString()))
         .thenAnswer(invocation -> invocation.getArgument(0, String.class).endsWith(".mkv"));
 
     DirectoryTree result = service.getDirectoryTree(7L);
 
-    assertEquals(2, result.getTree().getVideoFileCount());
+    assertEquals(1, result.getTree().getVideoFileCount());
+    assertTrue(result.getTree().isChildrenLoaded());
     assertEquals(2, result.getTree().getChildren().size());
     assertEquals("Empty", result.getTree().getChildren().get(0).getName());
-    assertEquals(0, result.getTree().getChildren().get(0).getVideoFileCount());
-    assertEquals(2, result.getTree().getChildren().get(1).getVideoFileCount());
+    assertFalse(result.getTree().getChildren().get(0).isChildrenLoaded());
+    verify(openlistApiService).getDirectoryContents(config, "/movies");
+    verify(openlistApiService, never()).getAllFilesRecursively(config, "/movies");
+  }
+
+  @Test
+  void loadsOnlyRequestedChildDirectoryLevel() {
+    stubMovieTask();
+    OpenlistConfig config = openlistConfigService.getById(3L);
+    when(openlistApiService.getDirectoryContents(config, "/movies/Movie A"))
+        .thenReturn(
+            List.of(
+                entry("movie.mkv", "/movies/Movie A/movie.mkv", "file"),
+                entry("Extras", "/movies/Movie A/Extras", "folder")));
+    when(strmFileService.isVideoFile("movie.mkv")).thenReturn(true);
+
+    var result = service.getDirectoryChildren(7L, "/movies/Movie A");
+
+    assertEquals(1, result.getVideoFileCount());
+    assertTrue(result.isChildrenLoaded());
+    assertEquals(1, result.getChildren().size());
+    assertEquals("Extras", result.getChildren().get(0).getName());
+    assertFalse(result.getChildren().get(0).isChildrenLoaded());
   }
 
   @Test

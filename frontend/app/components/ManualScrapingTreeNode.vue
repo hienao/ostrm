@@ -13,14 +13,19 @@
         @click="$emit('select', node)"
       >
         <svg
+          v-if="!loading"
           class="h-3.5 w-3.5 shrink-0 text-white/35 transition-transform"
           :class="{ 'rotate-90': expanded }"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
-          @click.stop="expanded = !expanded"
+          @click.stop="toggleExpanded"
         >
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+        </svg>
+        <svg v-else class="h-3.5 w-3.5 shrink-0 animate-spin text-blue-300" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
         <svg class="h-4 w-4 shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
@@ -29,9 +34,11 @@
       </button>
       <span
         class="shrink-0 rounded-full px-2 py-0.5 text-[11px]"
-        :class="node.videoFileCount ? 'bg-blue-500/15 text-blue-300' : 'bg-white/5 text-white/30'"
+        :class="node.childrenLoaded && node.videoFileCount
+          ? 'bg-blue-500/15 text-blue-300'
+          : 'bg-white/5 text-white/30'"
       >
-        {{ node.videoFileCount }} 个媒体
+        {{ node.childrenLoaded ? `${node.videoFileCount} 个本层媒体` : '未加载' }}
       </span>
     </div>
 
@@ -43,6 +50,7 @@
         :depth="depth + 1"
         :selected-path="selectedPath"
         @select="$emit('select', $event)"
+        @load-children="$emit('load-children', $event)"
       />
     </div>
   </div>
@@ -66,8 +74,16 @@ const props = defineProps({
   }
 })
 
-defineEmits(['select'])
+const emit = defineEmits(['select', 'load-children'])
 
-const expanded = ref(true)
+const expanded = ref(props.depth === 0)
+const loading = computed(() => Boolean(props.node.loading))
 const selected = computed(() => props.selectedPath === props.node.path)
+
+const toggleExpanded = () => {
+  expanded.value = !expanded.value
+  if (expanded.value && !props.node.childrenLoaded && !props.node.loading) {
+    emit('load-children', props.node)
+  }
+}
 </script>
