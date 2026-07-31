@@ -1,14 +1,17 @@
 package com.hienao.openlist2strm.controller;
 
 import com.hienao.openlist2strm.dto.ApiResponse;
+import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.DirectoryNode;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.DirectoryTree;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteRequest;
-import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteResult;
+import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.JobView;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.Preview;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.PreviewRequest;
 import com.hienao.openlist2strm.dto.task.TaskConfigDto;
+import com.hienao.openlist2strm.dto.task.TaskStructureCheckOverview;
 import com.hienao.openlist2strm.dto.task.TaskStructureCheckResult;
 import com.hienao.openlist2strm.entity.TaskConfig;
+import com.hienao.openlist2strm.service.ManualScrapingJobService;
 import com.hienao.openlist2strm.service.ManualScrapingService;
 import com.hienao.openlist2strm.service.TaskConfigService;
 import com.hienao.openlist2strm.service.TaskExecutionService;
@@ -17,6 +20,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +49,7 @@ public class TaskConfigController {
   private final TaskExecutionService taskExecutionService;
   private final TaskStructureCheckService taskStructureCheckService;
   private final ManualScrapingService manualScrapingService;
+  private final ManualScrapingJobService manualScrapingJobService;
 
   /** 查询所有配置 */
   @GetMapping
@@ -184,6 +189,7 @@ public class TaskConfigController {
       @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
       @RequestBody(required = false) TaskSubmitRequest request) {
     Boolean isIncremental = request != null ? request.getIsIncremental() : null;
+    manualScrapingJobService.assertNoActiveJob(id);
     taskExecutionService.submitTask(id, isIncremental);
     return ResponseEntity.ok(ApiResponse.success("任务已提交执行"));
   }
@@ -196,12 +202,41 @@ public class TaskConfigController {
     return ResponseEntity.ok(ApiResponse.success(taskStructureCheckService.check(id)));
   }
 
+  /** 获取目录结构检查的第一层目录 */
+  @GetMapping("/{id}/structure-check/directories")
+  @Operation(summary = "获取待检查目录", description = "只读取任务根目录，并返回第一层子目录和根目录文件检查结果")
+  public ResponseEntity<ApiResponse<TaskStructureCheckOverview>> getStructureCheckDirectories(
+      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id) {
+    return ResponseEntity.ok(ApiResponse.success(taskStructureCheckService.getOverview(id)));
+  }
+
+  /** 检查一个第一层子目录 */
+  @PostMapping("/{id}/structure-check/directory")
+  @Operation(summary = "检查单个第一层目录", description = "递归检查指定第一层子目录，仅返回该目录的异常文件树")
+  public ResponseEntity<ApiResponse<TaskStructureCheckResult>> checkStructureDirectory(
+      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
+      @Valid @RequestBody StructureDirectoryCheckRequest request) {
+    return ResponseEntity.ok(
+        ApiResponse.success(
+            taskStructureCheckService.checkDirectory(id, request.getDirectoryPath())));
+  }
+
   /** 获取手动刮削目录树 */
   @GetMapping("/{id}/manual-scraping/tree")
-  @Operation(summary = "获取手动刮削目录树", description = "递归返回任务目录下的所有文件夹及其媒体文件数量")
+  @Operation(summary = "获取手动刮削目录树", description = "只读取任务根目录的直接子目录和本层媒体文件数量")
   public ResponseEntity<ApiResponse<DirectoryTree>> getManualScrapingTree(
       @Parameter(description = "任务配置ID", required = true) @PathVariable Long id) {
     return ResponseEntity.ok(ApiResponse.success(manualScrapingService.getDirectoryTree(id)));
+  }
+
+  /** 按需获取手动刮削目录的下一层 */
+  @GetMapping("/{id}/manual-scraping/tree/children")
+  @Operation(summary = "加载手动刮削子目录", description = "只读取指定目录的直接子目录和本层媒体文件数量")
+  public ResponseEntity<ApiResponse<DirectoryNode>> getManualScrapingChildren(
+      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
+      @Parameter(description = "待展开目录路径", required = true) @RequestParam String directoryPath) {
+    return ResponseEntity.ok(
+        ApiResponse.success(manualScrapingService.getDirectoryChildren(id, directoryPath)));
   }
 
   /** 识别所选目录并返回刮削预览 */
@@ -213,13 +248,39 @@ public class TaskConfigController {
     return ResponseEntity.ok(ApiResponse.success(manualScrapingService.preview(id, request)));
   }
 
-  /** 确认执行手动刮削 */
+  /** 提交手动刮削异步作业 */
   @PostMapping("/{id}/manual-scraping/execute")
-  @Operation(summary = "执行手动刮削", description = "按预览确认结果重命名媒体，并将NFO和图片上传回OpenList")
-  public ResponseEntity<ApiResponse<ExecuteResult>> executeManualScraping(
+  @Operation(summary = "提交手动刮削", description = "立即返回作业ID，后台分阶段执行重命名、生成和上传")
+  public ResponseEntity<ApiResponse<JobView>> executeManualScraping(
       @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
       @Valid @RequestBody ExecuteRequest request) {
-    return ResponseEntity.ok(ApiResponse.success(manualScrapingService.execute(id, request)));
+    return ResponseEntity.ok(ApiResponse.success(manualScrapingJobService.submit(id, request)));
+  }
+
+  /** 查询最近一次手动刮削作业 */
+  @GetMapping("/{id}/manual-scraping/jobs/latest")
+  @Operation(summary = "查询最近手动刮削作业", description = "用于页面恢复当前进度或最近一次执行结果")
+  public ResponseEntity<ApiResponse<JobView>> getLatestManualScrapingJob(
+      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id) {
+    return ResponseEntity.ok(ApiResponse.success(manualScrapingJobService.getLatest(id)));
+  }
+
+  /** 查询手动刮削作业状态 */
+  @GetMapping("/{id}/manual-scraping/jobs/{jobId}")
+  @Operation(summary = "查询手动刮削进度", description = "返回作业当前阶段、进度和错误信息")
+  public ResponseEntity<ApiResponse<JobView>> getManualScrapingJob(
+      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
+      @Parameter(description = "手动刮削作业ID", required = true) @PathVariable Long jobId) {
+    return ResponseEntity.ok(ApiResponse.success(manualScrapingJobService.get(id, jobId)));
+  }
+
+  /** 从失败阶段重试手动刮削作业 */
+  @PostMapping("/{id}/manual-scraping/jobs/{jobId}/retry")
+  @Operation(summary = "重试手动刮削作业", description = "从已持久化的重命名、生成或上传检查点继续")
+  public ResponseEntity<ApiResponse<JobView>> retryManualScrapingJob(
+      @Parameter(description = "任务配置ID", required = true) @PathVariable Long id,
+      @Parameter(description = "手动刮削作业ID", required = true) @PathVariable Long jobId) {
+    return ResponseEntity.ok(ApiResponse.success(manualScrapingJobService.retry(id, jobId)));
   }
 
   /** 更新状态请求体 */
@@ -258,6 +319,19 @@ public class TaskConfigController {
 
     public void setIsIncremental(Boolean isIncremental) {
       this.isIncremental = isIncremental;
+    }
+  }
+
+  /** 第一层目录检查请求体 */
+  public static class StructureDirectoryCheckRequest {
+    @NotBlank(message = "目录路径不能为空") private String directoryPath;
+
+    public String getDirectoryPath() {
+      return directoryPath;
+    }
+
+    public void setDirectoryPath(String directoryPath) {
+      this.directoryPath = directoryPath;
     }
   }
 

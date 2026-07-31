@@ -163,6 +163,10 @@
                 <input type="checkbox" :checked="task.isIncrement" disabled class="mr-2 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500">
                 增量更新
               </label>
+              <label class="flex items-center text-sm text-white/60">
+                <input type="checkbox" :checked="task.skipInvalidStructure" disabled class="mr-2 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500">
+                跳过异常目录
+              </label>
             </div>
 
             <div class="mt-3" v-if="task.renameRegex">
@@ -288,6 +292,24 @@
                   </span>
                 </label>
 
+                <label
+                  class="flex items-start"
+                  :class="taskForm.libraryType === 'auto' || !taskForm.libraryType ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
+                >
+                  <input
+                    v-model="taskForm.skipInvalidStructure"
+                    type="checkbox"
+                    :disabled="taskForm.libraryType === 'auto' || !taskForm.libraryType"
+                    class="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500"
+                  >
+                  <span class="ml-2 text-sm text-white/70">
+                    跳过目录结构不符合的视频
+                    <span class="block text-xs text-white/40 mt-0.5">
+                      执行时不生成 STRM、也不刮削；增量任务会清理此前生成的异常文件
+                    </span>
+                  </span>
+                </label>
+
                 <label class="flex items-center cursor-pointer">
                   <input v-model="taskForm.isIncrement" type="checkbox" class="h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500">
                   <span class="ml-2 text-sm text-white/70">增量更新</span>
@@ -370,7 +392,11 @@
                   <span v-if="structureCheckTask">· {{ libraryTypeLabel(structureCheckTask.libraryType) }}</span>
                 </p>
               </div>
-              <button @click="closeStructureCheckModal" class="btn-icon">
+              <button
+                @click="closeStructureCheckModal"
+                class="btn-icon"
+                :disabled="Boolean(checkingStructureTaskId || checkingStructureDirectoryPath)"
+              >
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                 </svg>
@@ -379,58 +405,138 @@
 
             <div v-if="checkingStructureTaskId" class="flex flex-1 flex-col items-center justify-center py-16">
               <div class="h-10 w-10 animate-spin rounded-full border-4 border-amber-400 border-t-transparent"></div>
-              <p class="mt-4 text-sm text-white/50">正在递归扫描 OpenList 目录，请稍候...</p>
+              <p class="mt-4 text-sm text-white/50">正在读取任务根目录...</p>
             </div>
 
             <div v-else-if="structureCheckError" class="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
               {{ structureCheckError }}
             </div>
 
-            <div v-else-if="structureCheckResult" class="min-h-0 flex-1 overflow-y-auto pr-1">
+            <div v-else-if="structureCheckOverview" class="min-h-0 flex-1 overflow-y-auto pr-1">
               <div class="mb-4 rounded-xl border border-white/10 bg-white/5 p-4">
                 <div class="text-xs text-white/40">期望目录结构</div>
-                <div class="mt-1 font-mono text-sm text-amber-300">{{ structureCheckResult.expectedStructure }}</div>
-                <div class="mt-2 break-all text-xs text-white/35">任务根目录：{{ structureCheckResult.rootPath }}</div>
+                <div class="mt-1 font-mono text-sm text-amber-300">{{ structureCheckOverview.expectedStructure }}</div>
+                <div class="mt-2 break-all text-xs text-white/35">任务根目录：{{ structureCheckOverview.rootPath }}</div>
               </div>
 
-              <div v-if="!structureCheckResult.supported" class="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
-                {{ structureCheckResult.message }}
+              <div v-if="!structureCheckOverview.supported" class="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
+                {{ structureCheckOverview.message }}
               </div>
 
               <template v-else>
-                <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div class="rounded-xl border border-white/10 bg-white/5 p-3">
-                    <div class="text-xs text-white/35">扫描项目</div>
-                    <div class="mt-1 text-xl font-semibold text-white">{{ structureCheckResult.scannedEntryCount }}</div>
+                <div
+                  v-if="structureCheckOverview.rootFilesResult?.invalidFileCount"
+                  class="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 p-4"
+                >
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="font-medium text-red-200">任务根目录存在异常媒体文件</div>
+                      <div class="mt-1 text-xs text-red-200/60">
+                        根目录下的视频文件不属于任何第一层媒体目录
+                      </div>
+                    </div>
+                    <span class="rounded-full bg-red-500/15 px-2.5 py-1 text-xs text-red-300">
+                      {{ structureCheckOverview.rootFilesResult.invalidFileCount }} 个异常
+                    </span>
                   </div>
-                  <div class="rounded-xl border border-white/10 bg-white/5 p-3">
-                    <div class="text-xs text-white/35">视频文件</div>
-                    <div class="mt-1 text-xl font-semibold text-blue-300">{{ structureCheckResult.videoFileCount }}</div>
+                  <div class="mt-3 rounded-lg border border-white/10 bg-black/20 p-2">
+                    <TaskStructureTreeNode :node="structureCheckOverview.rootFilesResult.tree" />
                   </div>
-                  <div class="rounded-xl border border-white/10 bg-white/5 p-3">
-                    <div class="text-xs text-white/35">结构异常</div>
-                    <div class="mt-1 text-xl font-semibold" :class="structureCheckResult.invalidFileCount ? 'text-red-300' : 'text-emerald-300'">
-                      {{ structureCheckResult.invalidFileCount }}
+                </div>
+
+                <div class="mb-3 flex items-center justify-between">
+                  <div>
+                    <h4 class="font-medium text-white">第一层媒体目录</h4>
+                    <p class="mt-1 text-xs text-white/35">点击检查后，只递归扫描对应目录</p>
+                  </div>
+                  <span class="text-xs text-white/35">{{ structureCheckOverview.directories.length }} 个目录</span>
+                </div>
+
+                <div v-if="structureCheckOverview.directories.length" class="space-y-3">
+                  <div
+                    v-for="directory in structureCheckOverview.directories"
+                    :key="directory.path"
+                    class="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                  >
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div class="min-w-0">
+                        <div class="truncate font-medium text-white/85">{{ directory.name }}</div>
+                        <div class="mt-1 truncate font-mono text-xs text-white/30">{{ directory.path }}</div>
+                      </div>
+                      <button
+                        type="button"
+                        class="btn-secondary shrink-0 justify-center"
+                        :disabled="Boolean(checkingStructureDirectoryPath)"
+                        @click="checkStructureDirectory(directory)"
+                      >
+                        <svg
+                          v-if="checkingStructureDirectoryPath === directory.path"
+                          class="mr-2 h-4 w-4 animate-spin"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                        >
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        {{ checkingStructureDirectoryPath === directory.path
+                          ? '检查中...'
+                          : structureDirectoryStates[directory.path]?.result
+                            ? '重新检查'
+                            : '检查' }}
+                      </button>
+                    </div>
+
+                    <div
+                      v-if="structureDirectoryStates[directory.path]?.error"
+                      class="mt-3 rounded-lg bg-red-500/10 p-3 text-sm text-red-300"
+                    >
+                      {{ structureDirectoryStates[directory.path].error }}
+                    </div>
+
+                    <div v-if="structureDirectoryStates[directory.path]?.result" class="mt-3">
+                      <div class="flex flex-wrap gap-2 text-xs">
+                        <span class="rounded-md bg-white/5 px-2 py-1 text-white/45">
+                          扫描 {{ structureDirectoryStates[directory.path].result.scannedEntryCount }} 项
+                        </span>
+                        <span class="rounded-md bg-blue-500/10 px-2 py-1 text-blue-300">
+                          视频 {{ structureDirectoryStates[directory.path].result.videoFileCount }}
+                        </span>
+                        <span
+                          class="rounded-md px-2 py-1"
+                          :class="structureDirectoryStates[directory.path].result.invalidFileCount
+                            ? 'bg-red-500/10 text-red-300'
+                            : 'bg-emerald-500/10 text-emerald-300'"
+                        >
+                          {{ structureDirectoryStates[directory.path].result.invalidFileCount
+                            ? `异常 ${structureDirectoryStates[directory.path].result.invalidFileCount}`
+                            : '检查通过' }}
+                        </span>
+                      </div>
+                      <div
+                        v-if="structureDirectoryStates[directory.path].result.invalidFileCount"
+                        class="mt-3 rounded-lg border border-white/10 bg-black/20 p-2"
+                      >
+                        <TaskStructureTreeNode :node="structureDirectoryStates[directory.path].result.tree" />
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div v-if="structureCheckResult.invalidFileCount === 0" class="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-5 text-center">
-                  <svg class="mx-auto h-8 w-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                  </svg>
-                  <p class="mt-2 text-sm text-emerald-200">{{ structureCheckResult.message }}</p>
-                </div>
-
-                <div v-else class="rounded-xl border border-white/10 bg-black/20 p-2">
-                  <div class="mb-2 px-2 pt-1 text-xs text-white/35">仅展示异常文件及其父目录</div>
-                  <TaskStructureTreeNode :node="structureCheckResult.tree" />
+                <div v-else class="rounded-xl border border-white/10 bg-white/5 p-5 text-center text-sm text-white/45">
+                  {{ structureCheckOverview.message }}
                 </div>
               </template>
             </div>
 
             <div class="mt-5 flex justify-end">
-              <button type="button" class="btn-secondary" @click="closeStructureCheckModal">关闭</button>
+              <button
+                type="button"
+                class="btn-secondary"
+                :disabled="Boolean(checkingStructureTaskId || checkingStructureDirectoryPath)"
+                @click="closeStructureCheckModal"
+              >
+                关闭
+              </button>
             </div>
           </div>
         </div>
@@ -462,8 +568,10 @@ const editingTaskId = ref(null)
 const currentTaskId = ref(null)
 const generatingStrm = ref({})
 const checkingStructureTaskId = ref(null)
+const checkingStructureDirectoryPath = ref('')
 const structureCheckTask = ref(null)
-const structureCheckResult = ref(null)
+const structureCheckOverview = ref(null)
+const structureDirectoryStates = ref({})
 const structureCheckError = ref('')
 const taskForm = ref({
   taskName: '',
@@ -472,6 +580,7 @@ const taskForm = ref({
   strmPath: '/app/backend/strm',
   cron: '',
   needScrap: false,
+  skipInvalidStructure: false,
   renameRegex: '',
   isIncrement: true,
   isActive: true
@@ -511,7 +620,8 @@ const fetchTasks = async () => {
 const resetTaskForm = () => {
   taskForm.value = {
     taskName: '', path: '', strmPath: '/app/backend/strm', cron: '',
-    libraryType: '', needScrap: false, renameRegex: '', isIncrement: true, isActive: true
+    libraryType: '', needScrap: false, skipInvalidStructure: false,
+    renameRegex: '', isIncrement: true, isActive: true
   }
   strmSubPath.value = ''
   showRenameRegexHelp.value = false
@@ -522,6 +632,7 @@ const editTask = (task) => {
   taskForm.value = {
     taskName: task.taskName, path: task.path, strmPath: task.strmPath,
     libraryType: task.libraryType || 'auto', cron: task.cron || '', needScrap: task.needScrap || false,
+    skipInvalidStructure: task.libraryType && task.libraryType !== 'auto' ? task.skipInvalidStructure || false : false,
     renameRegex: task.renameRegex || '', isIncrement: task.isIncrement, isActive: task.isActive
   }
   const prefix = '/app/backend/strm/'
@@ -551,7 +662,12 @@ const submitTask = async () => {
     submitting.value = true
     if (taskForm.value.path) await validateTaskPath(taskForm.value.path)
     const fullStrmPath = '/app/backend/strm/' + (strmSubPath.value || '')
-    const taskData = { ...taskForm.value, strmPath: fullStrmPath, openlistConfigId: parseInt(configId) }
+    const taskData = {
+      ...taskForm.value,
+      skipInvalidStructure: taskForm.value.libraryType === 'auto' ? false : taskForm.value.skipInvalidStructure,
+      strmPath: fullStrmPath,
+      openlistConfigId: parseInt(configId)
+    }
     let response
     if (showCreateTaskModal.value) {
       response = await authenticatedApiCall('/task-config', { method: 'POST', body: taskData })
@@ -634,30 +750,65 @@ const executeTask = async (taskId, isIncremental) => {
 const checkTaskStructure = async (task) => {
   showStructureCheckModal.value = true
   structureCheckTask.value = task
-  structureCheckResult.value = null
+  structureCheckOverview.value = null
+  structureDirectoryStates.value = {}
   structureCheckError.value = ''
   checkingStructureTaskId.value = task.id
   try {
-    const response = await authenticatedApiCall(`/task-config/${task.id}/structure-check`, {
-      method: 'POST'
+    const response = await authenticatedApiCall(`/task-config/${task.id}/structure-check/directories`, {
+      method: 'GET'
     })
     if (response.code === 200) {
-      structureCheckResult.value = response.data
+      structureCheckOverview.value = response.data
     } else {
-      throw new Error(response.message || '目录结构检查失败')
+      throw new Error(response.message || '任务根目录读取失败')
     }
   } catch (error) {
-    logger.error('目录结构检查失败:', error)
-    structureCheckError.value = error.message || '目录结构检查失败，请稍后重试'
+    logger.error('读取待检查目录失败:', error)
+    structureCheckError.value = error.message || '任务根目录读取失败，请稍后重试'
   } finally {
     checkingStructureTaskId.value = null
   }
 }
 
+const checkStructureDirectory = async (directory) => {
+  if (!structureCheckTask.value || checkingStructureDirectoryPath.value) return
+  checkingStructureDirectoryPath.value = directory.path
+  structureDirectoryStates.value = {
+    ...structureDirectoryStates.value,
+    [directory.path]: { error: '', result: null }
+  }
+  try {
+    const response = await authenticatedApiCall(
+      `/task-config/${structureCheckTask.value.id}/structure-check/directory`,
+      {
+        method: 'POST',
+        body: { directoryPath: directory.path }
+      }
+    )
+    if (response.code !== 200) throw new Error(response.message || '目录检查失败')
+    structureDirectoryStates.value = {
+      ...structureDirectoryStates.value,
+      [directory.path]: { error: '', result: response.data }
+    }
+  } catch (error) {
+    logger.error('检查第一层目录失败:', error)
+    structureDirectoryStates.value = {
+      ...structureDirectoryStates.value,
+      [directory.path]: { error: error.message || '目录检查失败，请稍后重试', result: null }
+    }
+  } finally {
+    checkingStructureDirectoryPath.value = ''
+  }
+}
+
 const closeStructureCheckModal = () => {
+  if (checkingStructureTaskId.value || checkingStructureDirectoryPath.value) return
   showStructureCheckModal.value = false
   structureCheckTask.value = null
-  structureCheckResult.value = null
+  structureCheckOverview.value = null
+  structureDirectoryStates.value = {}
+  checkingStructureDirectoryPath.value = ''
   structureCheckError.value = ''
 }
 

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hienao.openlist2strm.mapper.ManualScrapingJobMapper">
+
+    <resultMap id="JobResultMap" type="com.hienao.openlist2strm.entity.ManualScrapingJob">
+        <id column="id" property="id" jdbcType="BIGINT"/>
+        <result column="task_id" property="taskId" jdbcType="BIGINT"/>
+        <result column="directory_path" property="directoryPath" jdbcType="VARCHAR"/>
+        <result column="final_directory_path" property="finalDirectoryPath" jdbcType="VARCHAR"/>
+        <result column="media_type" property="mediaType" jdbcType="VARCHAR"/>
+        <result column="tmdb_id" property="tmdbId" jdbcType="INTEGER"/>
+        <result column="rename_media" property="renameMedia" jdbcType="BOOLEAN"/>
+        <result column="status" property="status" jdbcType="VARCHAR"/>
+        <result column="stage" property="stage" jdbcType="VARCHAR"/>
+        <result column="progress" property="progress" jdbcType="INTEGER"/>
+        <result column="message" property="message" jdbcType="VARCHAR"/>
+        <result column="error_message" property="errorMessage" jdbcType="VARCHAR"/>
+        <result column="rename_plan" property="renamePlan" jdbcType="VARCHAR"/>
+        <result column="rename_operation_index" property="renameOperationIndex" jdbcType="INTEGER"/>
+        <result column="renamed_directory_count" property="renamedDirectoryCount" jdbcType="INTEGER"/>
+        <result column="renamed_file_count" property="renamedFileCount" jdbcType="INTEGER"/>
+        <result column="uploaded_files" property="uploadedFiles" jdbcType="VARCHAR"/>
+        <result column="created_at" property="createdAt" jdbcType="TIMESTAMP"/>
+        <result column="started_at" property="startedAt" jdbcType="TIMESTAMP"/>
+        <result column="completed_at" property="completedAt" jdbcType="TIMESTAMP"/>
+        <result column="updated_at" property="updatedAt" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <sql id="JobColumns">
+        id, task_id, directory_path, final_directory_path, media_type, tmdb_id, rename_media,
+        status, stage, progress, message, error_message, rename_plan, rename_operation_index,
+        renamed_directory_count, renamed_file_count, uploaded_files,
+        created_at, started_at, completed_at, updated_at
+    </sql>
+
+    <insert id="insert" parameterType="com.hienao.openlist2strm.entity.ManualScrapingJob"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO manual_scraping_job
+        (task_id, directory_path, final_directory_path, media_type, tmdb_id, rename_media,
+         status, stage, progress, message, rename_plan, rename_operation_index,
+         renamed_directory_count, renamed_file_count, uploaded_files)
+        VALUES
+        (#{taskId}, #{directoryPath}, #{finalDirectoryPath}, #{mediaType}, #{tmdbId}, #{renameMedia},
+         #{status}, #{stage}, #{progress}, #{message}, #{renamePlan}, #{renameOperationIndex},
+         #{renamedDirectoryCount}, #{renamedFileCount}, #{uploadedFiles})
+    </insert>
+
+    <select id="selectById" resultMap="JobResultMap">
+        SELECT <include refid="JobColumns"/>
+        FROM manual_scraping_job
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectActiveByTaskId" resultMap="JobResultMap">
+        SELECT <include refid="JobColumns"/>
+        FROM manual_scraping_job
+        WHERE task_id = #{taskId}
+          AND status IN ('PENDING', 'RUNNING')
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <select id="selectLatestByTaskId" resultMap="JobResultMap">
+        SELECT <include refid="JobColumns"/>
+        FROM manual_scraping_job
+        WHERE task_id = #{taskId}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <update id="markRunningIfPending">
+        UPDATE manual_scraping_job
+        SET status = 'RUNNING',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <update id="updateCheckpoint" parameterType="com.hienao.openlist2strm.entity.ManualScrapingJob">
+        UPDATE manual_scraping_job
+        SET status = #{status},
+            stage = #{stage},
+            progress = #{progress},
+            message = #{message},
+            error_message = #{errorMessage},
+            final_directory_path = #{finalDirectoryPath},
+            rename_plan = #{renamePlan},
+            rename_operation_index = #{renameOperationIndex},
+            renamed_directory_count = #{renamedDirectoryCount},
+            renamed_file_count = #{renamedFileCount},
+            uploaded_files = #{uploadedFiles},
+            completed_at = #{completedAt},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <update id="prepareRetry">
+        UPDATE manual_scraping_job
+        SET status = 'PENDING',
+            progress = CASE WHEN progress &gt;= 100 THEN 95 ELSE progress END,
+            message = '等待重试',
+            error_message = NULL,
+            completed_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND status = 'FAILED'
+    </update>
+
+    <update id="markInterruptedJobsFailed">
+        UPDATE manual_scraping_job
+        SET status = 'FAILED',
+            message = '应用重启导致作业中断，可从当前阶段重试',
+            error_message = '应用在作业完成前重启',
+            completed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE status IN ('PENDING', 'RUNNING')
+    </update>
+
+</mapper>

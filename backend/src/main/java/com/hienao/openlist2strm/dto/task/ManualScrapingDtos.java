@@ -3,10 +3,13 @@ package com.hienao.openlist2strm.dto.task;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /** 手动刮削流程使用的请求与响应对象。 */
 public final class ManualScrapingDtos {
@@ -29,6 +32,7 @@ public final class ManualScrapingDtos {
     private String name;
     private String path;
     private int videoFileCount;
+    private boolean childrenLoaded;
     @Builder.Default private List<DirectoryNode> children = new ArrayList<>();
   }
 
@@ -65,6 +69,7 @@ public final class ManualScrapingDtos {
     private String backdropUrl;
     private int videoFileCount;
     private String proposedDirectoryName;
+    @Builder.Default private List<RenameItem> proposedDirectoryRenames = new ArrayList<>();
     @Builder.Default private List<RenameItem> proposedFileRenames = new ArrayList<>();
     @Builder.Default private List<String> generatedFiles = new ArrayList<>();
     @Builder.Default private List<String> renamedGeneratedFiles = new ArrayList<>();
@@ -72,6 +77,8 @@ public final class ManualScrapingDtos {
 
   @Data
   @Builder
+  @NoArgsConstructor
+  @AllArgsConstructor
   public static class RenameItem {
     private String sourcePath;
     private String sourceName;
@@ -93,8 +100,33 @@ public final class ManualScrapingDtos {
   @Builder
   public static class ExecuteResult {
     private String finalDirectoryPath;
+    private int renamedDirectoryCount;
     private int renamedFileCount;
     @Builder.Default private List<String> uploadedFiles = new ArrayList<>();
     private String message;
+  }
+
+  @Data
+  @Builder
+  public static class JobView {
+    private Long id;
+    private Long taskId;
+    private String directoryPath;
+    private String finalDirectoryPath;
+    private String mediaType;
+    private Integer tmdbId;
+    private boolean renameMedia;
+    private String status;
+    private String stage;
+    private int progress;
+    private String message;
+    private String errorMessage;
+    private int renamedDirectoryCount;
+    private int renamedFileCount;
+    @Builder.Default private List<String> uploadedFiles = new ArrayList<>();
+    private LocalDateTime createdAt;
+    private LocalDateTime startedAt;
+    private LocalDateTime completedAt;
+    private LocalDateTime updatedAt;
   }
 }

@@ -75,7 +75,7 @@ public class StrmFileService {
       // 检查文件是否已存在
       if (Files.exists(strmFilePath)) {
         if (!forceRegenerate) {
-          log.info("STRM文件已存在，跳过生成: {}", strmFilePath);
+          log.debug("STRM文件已存在，跳过生成: {}", strmFilePath);
           return;
         }
         // forceRegenerate=true时（增量模式），比较内容是否相同
@@ -85,7 +85,7 @@ public class StrmFileService {
             log.debug("STRM链接未变化，跳过更新: {}", strmFilePath);
             return;
           }
-          log.info("STRM链接已变化，更新文件: {}", strmFilePath);
+          log.debug("STRM链接已变化，更新文件: {}", strmFilePath);
         } catch (IOException e) {
           log.warn("读取现有STRM文件失败，将重新生成: {}, 错误: {}", strmFilePath, e.getMessage());
         }
@@ -97,7 +97,7 @@ public class StrmFileService {
       // 写入STRM文件内容（直接写入已处理的finalUrl，避免重复编码）
       writeStrmFileDirectly(strmFilePath, finalUrl);
 
-      log.info("生成STRM文件成功: {}", strmFilePath);
+      log.debug("生成STRM文件成功: {}", strmFilePath);
 
     } catch (Exception e) {
       log.error("生成STRM文件失败: {}" + ERROR_SUFFIX + "{}", fileName, e.getMessage(), e);
@@ -140,6 +140,13 @@ public class StrmFileService {
     processedName += ".strm";
 
     return processedName;
+  }
+
+  /** 计算源媒体文件对应的本地 STRM 路径。 */
+  public Path resolveStrmFilePath(
+      String strmBasePath, String relativePath, String sourceFileName, String renameRegex) {
+    return buildStrmFilePath(
+        strmBasePath, relativePath, processFileName(sourceFileName, renameRegex));
   }
 
   /**
@@ -422,8 +429,9 @@ public class StrmFileService {
       return 0;
     }
 
-    if (openlistConfig == null) {
-      throw new BusinessException("OpenList配置不能为空，无法执行孤立文件清理");
+    if (existingFiles == null) {
+      log.warn("本轮 OpenList 文件快照不存在，为避免误删跳过孤立文件清理");
+      return 0;
     }
 
     try {
@@ -435,17 +443,47 @@ public class StrmFileService {
         return 0;
       }
 
-      log.info("开始使用深度优先遍历清理孤立STRM文件: {}", strmBasePath);
+      log.info("开始使用本轮 OpenList 完整快照清理孤立STRM文件: {}", strmBasePath);
 
-      // 计算任务路径在OpenList中的相对路径（作为根路径）
-      String openlistRootPath = taskPath;
+      java.util.Set<Path> expectedStrmFiles =
+          existingFiles.stream()
+              .filter(file -> "file".equals(file.getType()))
+              .filter(file -> isVideoFile(file.getName()))
+              .map(
+                  file -> {
+                    String relativePath = calculateRelativePath(taskPath, file.getPath());
+                    String strmFileName = processFileName(file.getName(), renameRegex);
+                    return buildStrmFilePath(strmBasePath, relativePath, strmFileName)
+                        .toAbsolutePath()
+                        .normalize();
+                  })
+              .collect(java.util.stream.Collectors.toSet());
 
-      // 使用深度优先遍历清理STRM目录
-      int cleanedCount =
-          validateAndCleanDirectory(
-              strmPath, openlistConfig, taskPath, openlistRootPath, renameRegex);
+      List<Path> orphanedFiles;
+      try (java.util.stream.Stream<Path> stream = Files.walk(strmPath)) {
+        orphanedFiles =
+            stream
+                .filter(Files::isRegularFile)
+                .filter(path -> path.toString().toLowerCase(Locale.ROOT).endsWith(".strm"))
+                .map(path -> path.toAbsolutePath().normalize())
+                .filter(path -> !expectedStrmFiles.contains(path))
+                .toList();
+      }
 
-      log.info("深度优先遍历清理完成，共清理 {} 个孤立文件/目录", cleanedCount);
+      int cleanedCount = 0;
+      for (Path orphanedFile : orphanedFiles) {
+        try {
+          Files.deleteIfExists(orphanedFile);
+          cleanOrphanedScrapingFiles(orphanedFile);
+          cleanedCount++;
+          log.info("删除孤立的STRM文件: {}", orphanedFile);
+        } catch (IOException e) {
+          log.warn("删除孤立STRM文件失败: {}, 错误: {}", orphanedFile, e.getMessage());
+        }
+      }
+      cleanEmptyDirectories(strmPath);
+
+      log.info("快照清理完成，共检查 {} 个预期 STRM，清理 {} 个孤立文件", expectedStrmFiles.size(), cleanedCount);
       return cleanedCount;
 
     } catch (Exception e) {
@@ -1018,7 +1056,7 @@ public class StrmFileService {
    */
   private String processUrlWithBaseUrlReplacement(
       String originalUrl, OpenlistConfig openlistConfig) {
-    log.info("开始处理URL替换，原始URL: {}", originalUrl);
+    log.debug("开始处理URL替换，原始URL: {}", originalUrl);
 
     if (originalUrl == null || openlistConfig == null) {
       log.warn(
@@ -1029,7 +1067,7 @@ public class StrmFileService {
     }
 
     // 打印配置详情
-    log.info(
+    log.debug(
         "OpenList配置详情 - ID: {}, strmBaseUrl: '{}'",
         openlistConfig.getId(),
         openlistConfig.getStrmBaseUrl());
@@ -1037,7 +1075,7 @@ public class StrmFileService {
     // 如果没有配置strmBaseUrl，直接返回原始URL
     if (openlistConfig.getStrmBaseUrl() == null
         || openlistConfig.getStrmBaseUrl().trim().isEmpty()) {
-      log.info("未配置strmBaseUrl或为空，直接使用原始URL: {}", originalUrl);
+      log.debug("未配置strmBaseUrl或为空，直接使用原始URL: {}", originalUrl);
       return originalUrl;
     }
 
@@ -1080,7 +1118,7 @@ public class StrmFileService {
         newUrl += "#" + ref;
       }
 
-      log.info("URL替换: {} -> {}", originalUrl, newUrl);
+      log.debug("URL替换: {} -> {}", originalUrl, newUrl);
       return newUrl;
 
     } catch (Exception e) {

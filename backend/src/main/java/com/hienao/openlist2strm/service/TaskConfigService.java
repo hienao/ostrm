@@ -385,6 +385,9 @@ public class TaskConfigService {
       taskConfig.setNeedScrap(false);
     }
     normalizeLibraryType(taskConfig);
+    if (taskConfig.getSkipInvalidStructure() == null) {
+      taskConfig.setSkipInvalidStructure(false);
+    }
     if (taskConfig.getRenameRegex() == null) {
       taskConfig.setRenameRegex("");
     }
@@ -407,7 +410,11 @@ public class TaskConfigService {
 
   private void normalizeLibraryType(TaskConfig taskConfig) {
     try {
-      taskConfig.setLibraryType(MediaLibraryType.from(taskConfig.getLibraryType()).value());
+      MediaLibraryType libraryType = MediaLibraryType.from(taskConfig.getLibraryType());
+      taskConfig.setLibraryType(libraryType.value());
+      if (libraryType == MediaLibraryType.AUTO) {
+        taskConfig.setSkipInvalidStructure(false);
+      }
     } catch (IllegalArgumentException e) {
       throw new BusinessException(e.getMessage());
     }

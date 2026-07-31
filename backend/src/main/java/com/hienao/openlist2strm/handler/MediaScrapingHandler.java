@@ -7,14 +7,17 @@ import com.hienao.openlist2strm.dto.tmdb.TmdbSearchResponse;
 import com.hienao.openlist2strm.dto.tmdb.TmdbTvDetail;
 import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.handler.context.FileProcessingContext;
+import com.hienao.openlist2strm.handler.context.TaskScrapingSession;
 import com.hienao.openlist2strm.service.AiFileNameRecognitionService;
 import com.hienao.openlist2strm.service.CoverImageService;
 import com.hienao.openlist2strm.service.NfoGeneratorService;
-import com.hienao.openlist2strm.service.SystemConfigService;
 import com.hienao.openlist2strm.service.TmdbApiService;
 import com.hienao.openlist2strm.util.TaskMediaParser;
 import com.hienao.openlist2strm.util.TmdbIdExtractor;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +45,6 @@ public class MediaScrapingHandler implements FileProcessorHandler {
   private final TmdbApiService tmdbApiService;
   private final NfoGeneratorService nfoGeneratorService;
   private final CoverImageService coverImageService;
-  private final SystemConfigService systemConfigService;
   private final AiFileNameRecognitionService aiFileNameRecognitionService;
 
   // ==================== 接口实现 ====================
@@ -60,6 +62,12 @@ public class MediaScrapingHandler implements FileProcessorHandler {
       // 检查 TMDB API Key
       if (!isTmdbConfigured(context)) {
         log.warn("TMDB API Key 未配置，跳过刮削");
+        context.getStats().incrementSkipped();
+        return ProcessingResult.SKIPPED;
+      }
+
+      if (Boolean.TRUE.equals(context.getAttribute("metadataAvailable"))) {
+        log.debug("已有本地或 OpenList NFO，跳过 TMDB 刮削: {}", context.getBaseFileName());
         context.getStats().incrementSkipped();
         return ProcessingResult.SKIPPED;
       }
@@ -94,8 +102,8 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     log.info("开始刮削媒体文件: {}", fileName);
 
     // 获取配置
-    Map<String, Object> scrapingConfig = systemConfigService.getScrapingConfig();
-    Map<String, Object> regexConfig = systemConfigService.getScrapingRegexConfig();
+    Map<String, Object> regexConfig = context.getAttribute("scrapingRegexConfig", Map.of());
+    TaskScrapingSession session = getSession(context);
 
     List<String> movieRegexps =
         (List<String>) regexConfig.getOrDefault("movieRegexps", Collections.emptyList());
@@ -120,7 +128,7 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     // 如果路径中有 TMDB ID，直接使用
     if (tmdbId != null) {
       log.info("检测到路径中的 TMDB ID: {}, 直接从 TMDB 获取信息", tmdbId);
-      scrapeWithTmdbId(context, fileName, saveDirectory, tmdbId, mediaInfo);
+      scrapeWithTmdbId(context, fileName, saveDirectory, tmdbId, mediaInfo, session);
       return;
     }
 
@@ -128,7 +136,7 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     if (mediaInfo.getConfidence() < 70) {
       log.info("正则解析置信度低 ({}%)，尝试使用 AI 识别: {}", mediaInfo.getConfidence(), fileName);
 
-      Map<String, Object> aiConfig = systemConfigService.getAiConfig();
+      Map<String, Object> aiConfig = context.getAttribute("aiConfig", Map.of());
       boolean aiRecognitionEnabled = (Boolean) aiConfig.getOrDefault("enabled", false);
 
       if (aiRecognitionEnabled) {
@@ -162,9 +170,9 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     String baseFileName = getStrmCompatibleBaseFileName(fileName);
 
     if (mediaInfo.isMovie()) {
-      scrapMovie(mediaInfo, saveDirectory, baseFileName, scrapingConfig);
+      scrapMovie(mediaInfo, saveDirectory, baseFileName, session);
     } else if (mediaInfo.isTvShow()) {
-      scrapTvShow(mediaInfo, saveDirectory, baseFileName, scrapingConfig);
+      scrapTvShow(mediaInfo, saveDirectory, baseFileName, session);
     } else {
       log.warn("未知媒体类型，跳过刮削: {}", fileName);
     }
@@ -176,7 +184,8 @@ public class MediaScrapingHandler implements FileProcessorHandler {
       String fileName,
       String saveDirectory,
       Integer tmdbId,
-      MediaInfo mediaInfo) {
+      MediaInfo mediaInfo,
+      TaskScrapingSession session) {
 
     MediaLibraryType libraryType = MediaLibraryType.from(context.getTaskConfig().getLibraryType());
     boolean isMovie =
@@ -185,16 +194,16 @@ public class MediaScrapingHandler implements FileProcessorHandler {
 
     try {
       if (isMovie) {
-        TmdbMovieDetail movieDetail = tmdbApiService.getMovieDetail(tmdbId);
+        TmdbMovieDetail movieDetail = getMovieDetail(session, tmdbId);
         if (movieDetail != null) {
           String baseFileName = getStrmCompatibleBaseFileName(fileName);
-          scrapMovieWithDetail(mediaInfo, saveDirectory, baseFileName, movieDetail);
+          scrapMovieWithDetail(mediaInfo, saveDirectory, baseFileName, movieDetail, session);
         }
       } else {
-        TmdbTvDetail tvDetail = tmdbApiService.getTvDetail(tmdbId);
+        TmdbTvDetail tvDetail = getTvDetail(session, tmdbId);
         if (tvDetail != null) {
           String baseFileName = getStrmCompatibleBaseFileName(fileName);
-          scrapTvShowWithDetail(mediaInfo, saveDirectory, baseFileName, tvDetail);
+          scrapTvShowWithDetail(mediaInfo, saveDirectory, baseFileName, tvDetail, session);
         }
       }
     } catch (Exception e) {
@@ -204,15 +213,24 @@ public class MediaScrapingHandler implements FileProcessorHandler {
 
   /** 刮削电影 */
   private void scrapMovie(
-      MediaInfo mediaInfo,
-      String saveDirectory,
-      String baseFileName,
-      Map<String, Object> scrapingConfig) {
+      MediaInfo mediaInfo, String saveDirectory, String baseFileName, TaskScrapingSession session) {
     try {
+      String cacheKey = matchCacheKey("movie", mediaInfo);
+      TmdbMovieDetail cachedDetail = session.movieMatches().get(cacheKey);
+      if (cachedDetail != null) {
+        scrapMovieWithDetail(mediaInfo, saveDirectory, baseFileName, cachedDetail, session);
+        return;
+      }
+      if (session.negativeMatches().contains(cacheKey)) {
+        log.debug("命中电影搜索负缓存，跳过重复请求: {}", mediaInfo.getSearchQuery());
+        return;
+      }
+
       TmdbSearchResponse searchResult =
           tmdbApiService.searchMovies(mediaInfo.getSearchQuery(), mediaInfo.getYear());
 
       if (searchResult.getResults() == null || searchResult.getResults().isEmpty()) {
+        session.negativeMatches().add(cacheKey);
         log.warn("刮削失败 - 未找到匹配的电影: {} (年份: {})", mediaInfo.getSearchQuery(), mediaInfo.getYear());
         return;
       }
@@ -224,10 +242,11 @@ public class MediaScrapingHandler implements FileProcessorHandler {
         return;
       }
 
-      TmdbMovieDetail movieDetail = tmdbApiService.getMovieDetail(bestMatch.getId());
+      TmdbMovieDetail movieDetail = getMovieDetail(session, bestMatch.getId());
+      session.movieMatches().put(cacheKey, movieDetail);
       log.info("找到匹配电影: {} ({})", movieDetail.getTitle(), movieDetail.getId());
 
-      scrapMovieWithDetail(mediaInfo, saveDirectory, baseFileName, movieDetail);
+      scrapMovieWithDetail(mediaInfo, saveDirectory, baseFileName, movieDetail, session);
 
     } catch (Exception e) {
       log.error("刮削电影失败: {}", mediaInfo.getSearchQuery(), e);
@@ -236,7 +255,11 @@ public class MediaScrapingHandler implements FileProcessorHandler {
 
   /** 使用电影详情刮削 */
   private void scrapMovieWithDetail(
-      MediaInfo mediaInfo, String saveDirectory, String baseFileName, TmdbMovieDetail movieDetail) {
+      MediaInfo mediaInfo,
+      String saveDirectory,
+      String baseFileName,
+      TmdbMovieDetail movieDetail,
+      TaskScrapingSession session) {
 
     // 生成NFO文件（始终执行）
     String nfoFilePath = Paths.get(saveDirectory, baseFileName + ".nfo").toString();
@@ -245,20 +268,29 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     // 下载图片
     String posterUrl = tmdbApiService.buildPosterUrl(movieDetail.getPosterPath());
     String backdropUrl = tmdbApiService.buildBackdropUrl(movieDetail.getBackdropPath());
-    coverImageService.downloadImages(posterUrl, backdropUrl, saveDirectory, baseFileName);
+    materializeImages(session, posterUrl, backdropUrl, saveDirectory, baseFileName);
   }
 
   /** 刮削电视剧 */
   private void scrapTvShow(
-      MediaInfo mediaInfo,
-      String saveDirectory,
-      String baseFileName,
-      Map<String, Object> scrapingConfig) {
+      MediaInfo mediaInfo, String saveDirectory, String baseFileName, TaskScrapingSession session) {
     try {
+      String cacheKey = matchCacheKey("tv", mediaInfo);
+      TmdbTvDetail cachedDetail = session.tvMatches().get(cacheKey);
+      if (cachedDetail != null) {
+        scrapTvShowWithDetail(mediaInfo, saveDirectory, baseFileName, cachedDetail, session);
+        return;
+      }
+      if (session.negativeMatches().contains(cacheKey)) {
+        log.debug("命中电视剧搜索负缓存，跳过重复请求: {}", mediaInfo.getSearchQuery());
+        return;
+      }
+
       TmdbSearchResponse searchResult =
           tmdbApiService.searchTvShows(mediaInfo.getSearchQuery(), mediaInfo.getYear());
 
       if (searchResult.getResults() == null || searchResult.getResults().isEmpty()) {
+        session.negativeMatches().add(cacheKey);
         log.warn("刮削失败 - 未找到匹配的电视剧: {} (年份: {})", mediaInfo.getSearchQuery(), mediaInfo.getYear());
         return;
       }
@@ -270,10 +302,11 @@ public class MediaScrapingHandler implements FileProcessorHandler {
         return;
       }
 
-      TmdbTvDetail tvDetail = tmdbApiService.getTvDetail(bestMatch.getId());
+      TmdbTvDetail tvDetail = getTvDetail(session, bestMatch.getId());
+      session.tvMatches().put(cacheKey, tvDetail);
       log.info("找到匹配电视剧: {} ({})", tvDetail.getName(), tvDetail.getId());
 
-      scrapTvShowWithDetail(mediaInfo, saveDirectory, baseFileName, tvDetail);
+      scrapTvShowWithDetail(mediaInfo, saveDirectory, baseFileName, tvDetail, session);
 
     } catch (Exception e) {
       log.error("刮削电视剧失败: {}", mediaInfo.getSearchQuery(), e);
@@ -282,7 +315,11 @@ public class MediaScrapingHandler implements FileProcessorHandler {
 
   /** 使用电视剧详情刮削 */
   private void scrapTvShowWithDetail(
-      MediaInfo mediaInfo, String saveDirectory, String baseFileName, TmdbTvDetail tvDetail) {
+      MediaInfo mediaInfo,
+      String saveDirectory,
+      String baseFileName,
+      TmdbTvDetail tvDetail,
+      TaskScrapingSession session) {
 
     // 生成NFO文件（始终执行）
     String nfoFilePath = Paths.get(saveDirectory, baseFileName + ".nfo").toString();
@@ -291,19 +328,96 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     // 下载图片
     String posterUrl = tmdbApiService.buildPosterUrl(tvDetail.getPosterPath());
     String backdropUrl = tmdbApiService.buildBackdropUrl(tvDetail.getBackdropPath());
-    coverImageService.downloadImages(posterUrl, backdropUrl, saveDirectory, baseFileName);
+    materializeImages(session, posterUrl, backdropUrl, saveDirectory, baseFileName);
   }
 
   // ==================== 辅助方法 ====================
 
+  private TaskScrapingSession getSession(FileProcessingContext context) {
+    TaskScrapingSession session = context.getAttribute("scrapingSession");
+    if (session == null) {
+      session = new TaskScrapingSession();
+      context.setAttribute("scrapingSession", session);
+    }
+    return session;
+  }
+
+  private TmdbMovieDetail getMovieDetail(TaskScrapingSession session, Integer tmdbId) {
+    TmdbMovieDetail detail = session.movieDetails().get(tmdbId);
+    if (detail == null) {
+      detail = tmdbApiService.getMovieDetail(tmdbId);
+      session.movieDetails().put(tmdbId, detail);
+    }
+    return detail;
+  }
+
+  private TmdbTvDetail getTvDetail(TaskScrapingSession session, Integer tmdbId) {
+    TmdbTvDetail detail = session.tvDetails().get(tmdbId);
+    if (detail == null) {
+      detail = tmdbApiService.getTvDetail(tmdbId);
+      session.tvDetails().put(tmdbId, detail);
+    }
+    return detail;
+  }
+
+  private String matchCacheKey(String mediaType, MediaInfo mediaInfo) {
+    return mediaType
+        + ":"
+        + String.valueOf(mediaInfo.getSearchQuery()).trim().toLowerCase(java.util.Locale.ROOT)
+        + ":"
+        + String.valueOf(mediaInfo.getYear());
+  }
+
+  private void materializeImages(
+      TaskScrapingSession session,
+      String posterUrl,
+      String backdropUrl,
+      String saveDirectory,
+      String baseFileName) {
+    materializeImage(
+        session,
+        posterUrl,
+        Paths.get(saveDirectory, baseFileName + "-poster.jpg"),
+        () -> coverImageService.downloadPoster(posterUrl, saveDirectory, baseFileName));
+    materializeImage(
+        session,
+        backdropUrl,
+        Paths.get(saveDirectory, baseFileName + "-backdrop.jpg"),
+        () -> coverImageService.downloadBackdrop(backdropUrl, saveDirectory, baseFileName));
+  }
+
+  private void materializeImage(
+      TaskScrapingSession session,
+      String imageUrl,
+      Path target,
+      java.util.function.Supplier<String> downloader) {
+    if (imageUrl == null || imageUrl.isBlank() || Files.exists(target)) {
+      return;
+    }
+    try {
+      Path cached = session.downloadedImages().get(imageUrl);
+      if (cached != null && Files.exists(cached)) {
+        Files.createDirectories(target.getParent());
+        Files.copy(cached, target, StandardCopyOption.REPLACE_EXISTING);
+        return;
+      }
+      String downloaded = downloader.get();
+      if (downloaded != null) {
+        session.downloadedImages().put(imageUrl, Paths.get(downloaded));
+      }
+    } catch (Exception e) {
+      log.warn("复用刮削图片失败: {}, 将跳过当前图片", target, e);
+    }
+  }
+
   private boolean isScrapingEnabled(FileProcessingContext context) {
-    Map<String, Object> config = systemConfigService.getScrapingConfig();
+    Map<String, Object> config = context.getAttribute("scrapingConfig", Map.of());
     return Boolean.TRUE.equals(config.getOrDefault("enabled", true))
         && Boolean.TRUE.equals(context.getTaskConfig().getNeedScrap());
   }
 
   private boolean isTmdbConfigured(FileProcessingContext context) {
-    Map<String, Object> config = systemConfigService.getTmdbConfig();
+    Map<String, Object> config = context.getAttribute("tmdbConfig", Map.of());
     String apiKey = (String) config.getOrDefault("apiKey", "");
     return apiKey != null && !apiKey.trim().isEmpty();
   }

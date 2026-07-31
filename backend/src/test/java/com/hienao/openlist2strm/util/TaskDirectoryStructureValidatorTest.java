@@ -1,5 +1,6 @@
 package com.hienao.openlist2strm.util;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -7,6 +8,19 @@ import com.hienao.openlist2strm.entity.MediaLibraryType;
 import org.junit.jupiter.api.Test;
 
 class TaskDirectoryStructureValidatorTest {
+
+  @Test
+  void calculatesRelativePathIncludingFileName() {
+    assertEquals(
+        "2001太空漫游 (1968) {tmdbid-62}/2001太空漫游 (1968) {tmdbid-62}.mkv",
+        TaskDirectoryStructureValidator.calculateRelativePath(
+            "/115/meida/movie",
+            "/115/meida/movie/2001太空漫游 (1968) {tmdbid-62}/2001太空漫游 (1968) {tmdbid-62}.mkv"));
+    assertEquals(
+        "Panda.Plan.2026.mkv",
+        TaskDirectoryStructureValidator.calculateRelativePath(
+            "/115/meida/movie", "/115/meida/movie/Panda.Plan.2026.mkv"));
+  }
 
   @Test
   void validatesMovieHierarchy() {

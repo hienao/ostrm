@@ -26,23 +26,77 @@
       <button type="button" class="ml-3 underline" @click="loadPage">重试</button>
     </div>
 
-    <div v-else class="grid gap-6 lg:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">
-      <section class="card min-h-[560px]">
-        <div class="mb-4">
-          <h2 class="font-medium text-white">任务目录</h2>
-          <p class="mt-1 text-xs text-white/40">选择包含一个电影或一部剧集的目录</p>
+    <div v-else>
+      <div
+        v-if="scrapingJob"
+        class="mb-6 rounded-xl border p-5"
+        :class="isJobFailed
+          ? 'border-red-500/25 bg-red-500/10'
+          : isJobSucceeded
+            ? 'border-emerald-500/25 bg-emerald-500/10'
+            : 'border-blue-500/25 bg-blue-500/10'"
+      >
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-medium text-white">
+                {{ isJobActive ? '刮削任务执行中' : isJobFailed ? '刮削任务执行失败' : '刮削任务已完成' }}
+              </span>
+              <span class="text-xs text-white/35">#{{ scrapingJob.id }} · {{ jobStageLabel(scrapingJob.stage) }}</span>
+            </div>
+            <p class="mt-2 text-sm text-white/65">{{ scrapingJob.message }}</p>
+            <p
+              v-if="scrapingJob.renamedDirectoryCount || scrapingJob.renamedFileCount"
+              class="mt-2 text-xs text-white/45"
+            >
+              已重命名 {{ scrapingJob.renamedDirectoryCount || 0 }} 个目录、{{ scrapingJob.renamedFileCount || 0 }} 个媒体文件
+            </p>
+            <p v-if="scrapingJob.errorMessage" class="mt-2 break-all text-sm text-red-200">
+              {{ scrapingJob.errorMessage }}
+            </p>
+            <p v-if="isJobActive" class="mt-2 text-xs text-amber-100/65">
+              作业结束前，当前任务的再次刮削及手动执行已锁定。
+            </p>
+          </div>
+          <button
+            v-if="isJobFailed"
+            type="button"
+            class="btn-primary shrink-0 justify-center"
+            :disabled="retrying"
+            @click="retryScraping"
+          >
+            {{ retrying ? '正在恢复...' : `从${jobStageLabel(scrapingJob.stage)}阶段继续` }}
+          </button>
         </div>
-        <div class="max-h-[68vh] overflow-y-auto pr-1">
-          <ManualScrapingTreeNode
-            v-if="treeResult?.tree"
-            :node="treeResult.tree"
-            :selected-path="selectedDirectory?.path"
-            @select="selectDirectory"
+        <div v-if="isJobActive" class="mt-4 h-2 overflow-hidden rounded-full bg-black/20">
+          <div
+            class="h-full rounded-full bg-blue-400 transition-all duration-500"
+            :style="{ width: `${scrapingJob.progress || 0}%` }"
           />
         </div>
-      </section>
+        <div v-if="isJobActive" class="mt-1 text-right text-xs text-white/35">
+          {{ scrapingJob.progress || 0 }}%
+        </div>
+      </div>
 
-      <section class="card min-h-[560px]">
+      <div class="grid gap-6 lg:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">
+        <section class="card min-h-[560px]" :class="{ 'pointer-events-none opacity-60': isJobActive }">
+          <div class="mb-4">
+            <h2 class="font-medium text-white">任务目录</h2>
+            <p class="mt-1 text-xs text-white/40">选择包含一个电影或一部剧集的目录</p>
+          </div>
+          <div class="max-h-[68vh] overflow-y-auto pr-1">
+            <ManualScrapingTreeNode
+              v-if="treeResult?.tree"
+              :node="treeResult.tree"
+              :selected-path="selectedDirectory?.path"
+              @select="selectDirectory"
+              @load-children="loadDirectoryChildren"
+            />
+          </div>
+        </section>
+
+        <section class="card min-h-[560px]">
         <div v-if="!selectedDirectory" class="flex h-full min-h-[480px] items-center justify-center text-center">
           <div>
             <svg class="mx-auto h-12 w-12 text-white/15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -61,7 +115,11 @@
             <p class="font-medium text-white/75">{{ selectedDirectory.name }}</p>
             <p class="mt-2 break-all font-mono text-xs text-white/35">{{ selectedDirectory.path }}</p>
             <p class="mt-4 text-sm text-white/45">
-              共 {{ selectedDirectory.videoFileCount }} 个媒体文件，点击“识别并预览”继续
+              <template v-if="selectedDirectory.childrenLoaded">
+                本层有 {{ selectedDirectory.videoFileCount }} 个媒体文件
+              </template>
+              <template v-else>该目录尚未展开</template>
+              ，点击“识别并预览”后将扫描所选目录
             </p>
           </div>
         </div>
@@ -185,7 +243,10 @@
               <span>
                 <span class="block text-sm font-medium text-white">重命名媒体目录和文件</span>
                 <span class="mt-1 block text-xs leading-5 text-amber-200/65">
-                  确认后会先重命名文件夹，再重命名其中的媒体文件。该操作会直接修改 OpenList 源目录。
+                  {{ preview.mediaType === 'tv'
+                    ? '确认后会依次重命名剧集根目录、季目录和媒体文件。'
+                    : '确认后会依次重命名媒体目录和媒体文件。' }}
+                  该操作会直接修改 OpenList 源目录。
                 </span>
               </span>
             </label>
@@ -197,12 +258,30 @@
           <div v-if="renameMedia" class="space-y-3">
             <h3 class="text-sm font-medium text-white/80">重命名预览</h3>
             <div class="rounded-lg bg-white/[0.03] p-3 text-sm">
-              <span class="text-white/40">文件夹：</span>
+              <span class="text-white/40">媒体目录：</span>
               <span class="break-all font-mono text-white/75">{{ selectedDirectory.name }}</span>
               <span class="mx-2 text-white/25">→</span>
               <span class="break-all font-mono text-emerald-300">{{ preview.proposedDirectoryName }}</span>
             </div>
+            <div v-if="preview.proposedDirectoryRenames?.length" class="space-y-1">
+              <div class="px-3 text-xs text-white/40">季目录</div>
+              <div
+                v-for="item in preview.proposedDirectoryRenames"
+                :key="item.sourcePath"
+                class="grid gap-1 rounded-lg px-3 py-2 text-xs sm:grid-cols-[1fr_auto_1fr]"
+              >
+                <span class="break-all font-mono text-white/45">{{ item.sourceName }}</span>
+                <span class="hidden text-white/20 sm:block">→</span>
+                <span
+                  class="break-all font-mono"
+                  :class="item.sourceName === item.targetName ? 'text-white/35' : 'text-emerald-300'"
+                >
+                  {{ item.targetName }}{{ item.sourceName === item.targetName ? '（保持不变）' : '' }}
+                </span>
+              </div>
+            </div>
             <div class="max-h-48 space-y-1 overflow-y-auto">
+              <div class="px-3 text-xs text-white/40">媒体文件</div>
               <div
                 v-for="item in preview.proposedFileRenames"
                 :key="item.sourcePath"
@@ -237,20 +316,21 @@
             <button
               type="button"
               class="btn-primary"
-              :disabled="executing || (renameMedia && isTaskRoot)"
+              :disabled="executing || isJobActive || (renameMedia && isTaskRoot)"
               @click="executeScraping"
             >
-              {{ executing ? '正在刮削并上传...' : '确认刮削' }}
+              {{ executing ? '正在提交...' : isJobActive ? '已有刮削任务执行中' : '确认刮削' }}
             </button>
           </div>
         </div>
-      </section>
+        </section>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ManualScrapingTreeNode from '~/components/ManualScrapingTreeNode.vue'
 import { authenticatedApiCall } from '~/core/api/client'
@@ -263,6 +343,7 @@ const taskId = Number(route.params.taskId)
 const loading = ref(true)
 const previewing = ref(false)
 const executing = ref(false)
+const retrying = ref(false)
 const pageError = ref('')
 const previewError = ref('')
 const manualSearchError = ref('')
@@ -276,9 +357,16 @@ const manualTitle = ref('')
 const manualYear = ref('')
 const manualTmdbId = ref('')
 const showManualSearch = ref(false)
+const scrapingJob = ref(null)
+let pollingTimer = null
 
+const isJobActive = computed(() =>
+  ['PENDING', 'RUNNING'].includes(scrapingJob.value?.status)
+)
+const isJobFailed = computed(() => scrapingJob.value?.status === 'FAILED')
+const isJobSucceeded = computed(() => scrapingJob.value?.status === 'SUCCEEDED')
 const canPreview = computed(() =>
-  selectedDirectory.value && selectedDirectory.value.videoFileCount > 0
+  !isJobActive.value && selectedDirectory.value
 )
 const isTaskRoot = computed(() =>
   selectedDirectory.value?.path === treeResult.value?.rootPath
@@ -296,18 +384,32 @@ const libraryTypeLabel = (type) => ({
   anime: '动画'
 }[type] || type)
 
+const jobStageLabel = (stage) => ({
+  PREPARING: '准备',
+  RENAMING: '重命名',
+  GENERATING: '下载与生成',
+  UPLOADING: '上传',
+  COMPLETED: '完成'
+}[stage] || stage || '未知')
+
 const loadPage = async () => {
   loading.value = true
   pageError.value = ''
   try {
-    const [taskResponse, treeResponse] = await Promise.all([
+    const [taskResponse, treeResponse, jobResponse] = await Promise.all([
       authenticatedApiCall(`/task-config/${taskId}`, { method: 'GET' }),
-      authenticatedApiCall(`/task-config/${taskId}/manual-scraping/tree`, { method: 'GET' })
+      authenticatedApiCall(`/task-config/${taskId}/manual-scraping/tree`, { method: 'GET' }),
+      authenticatedApiCall(`/task-config/${taskId}/manual-scraping/jobs/latest`, { method: 'GET' })
     ])
     if (taskResponse.code !== 200) throw new Error(taskResponse.message || '任务不存在')
     if (treeResponse.code !== 200) throw new Error(treeResponse.message || '目录读取失败')
     taskInfo.value = taskResponse.data
     treeResult.value = treeResponse.data
+    if (jobResponse.code === 200) {
+      scrapingJob.value = jobResponse.data
+      applyTerminalJobResult()
+      if (isJobActive.value) startPolling()
+    }
   } catch (error) {
     logger.error('加载手动刮削页面失败:', error)
     pageError.value = error.message || '加载任务目录失败'
@@ -317,6 +419,7 @@ const loadPage = async () => {
 }
 
 const selectDirectory = (node) => {
+  if (isJobActive.value) return
   selectedDirectory.value = node
   preview.value = null
   previewError.value = ''
@@ -327,6 +430,27 @@ const selectDirectory = (node) => {
   manualYear.value = ''
   manualTmdbId.value = ''
   showManualSearch.value = false
+}
+
+const loadDirectoryChildren = async (node) => {
+  if (isJobActive.value || node.loading || node.childrenLoaded) return
+  node.loading = true
+  try {
+    const query = new URLSearchParams({ directoryPath: node.path })
+    const response = await authenticatedApiCall(
+      `/task-config/${taskId}/manual-scraping/tree/children?${query.toString()}`,
+      { method: 'GET' }
+    )
+    if (response.code !== 200) throw new Error(response.message || '子目录读取失败')
+    node.children = response.data.children || []
+    node.videoFileCount = response.data.videoFileCount || 0
+    node.childrenLoaded = true
+  } catch (error) {
+    logger.error('加载手动刮削子目录失败:', error)
+    previewError.value = error.message || '子目录读取失败'
+  } finally {
+    node.loading = false
+  }
 }
 
 const loadPreview = async (manual = false) => {
@@ -383,8 +507,11 @@ const toggleManualSearch = () => {
 }
 
 const executeScraping = async () => {
-  if (!preview.value) return
-  const action = renameMedia.value ? '重命名源目录和文件，并上传刮削信息' : '上传刮削信息'
+  if (!preview.value || isJobActive.value) return
+  const renameAction = preview.value.mediaType === 'tv'
+    ? '重命名源目录、季目录和文件，并上传刮削信息'
+    : '重命名源目录和文件，并上传刮削信息'
+  const action = renameMedia.value ? renameAction : '上传刮削信息'
   if (!confirm(`确认${action}？`)) return
 
   executing.value = true
@@ -400,13 +527,79 @@ const executeScraping = async () => {
       }
     })
     if (response.code !== 200) throw new Error(response.message || '手动刮削失败')
-    executeResult.value = response.data
-    await refreshTreeAfterExecution()
+    scrapingJob.value = response.data
+    executeResult.value = null
+    startPolling()
   } catch (error) {
     logger.error('手动刮削执行失败:', error)
     previewError.value = error.message || '手动刮削失败'
   } finally {
     executing.value = false
+  }
+}
+
+const stopPolling = () => {
+  if (pollingTimer) {
+    clearTimeout(pollingTimer)
+    pollingTimer = null
+  }
+}
+
+const applyTerminalJobResult = () => {
+  if (!scrapingJob.value || isJobActive.value) return
+  if (isJobSucceeded.value) {
+    executeResult.value = {
+      message: scrapingJob.value.message,
+      finalDirectoryPath: scrapingJob.value.finalDirectoryPath
+    }
+  }
+}
+
+const pollJob = async () => {
+  if (!scrapingJob.value?.id) return
+  try {
+    const response = await authenticatedApiCall(
+      `/task-config/${taskId}/manual-scraping/jobs/${scrapingJob.value.id}`,
+      { method: 'GET' }
+    )
+    if (response.code !== 200) throw new Error(response.message || '获取刮削进度失败')
+    scrapingJob.value = response.data
+    if (isJobActive.value) {
+      pollingTimer = setTimeout(pollJob, 1500)
+    } else {
+      stopPolling()
+      applyTerminalJobResult()
+      if (isJobSucceeded.value) await refreshTreeAfterExecution()
+    }
+  } catch (error) {
+    logger.error('获取手动刮削进度失败:', error)
+    pollingTimer = setTimeout(pollJob, 3000)
+  }
+}
+
+const startPolling = () => {
+  stopPolling()
+  if (isJobActive.value) pollingTimer = setTimeout(pollJob, 500)
+}
+
+const retryScraping = async () => {
+  if (!isJobFailed.value || retrying.value) return
+  retrying.value = true
+  previewError.value = ''
+  try {
+    const response = await authenticatedApiCall(
+      `/task-config/${taskId}/manual-scraping/jobs/${scrapingJob.value.id}/retry`,
+      { method: 'POST' }
+    )
+    if (response.code !== 200) throw new Error(response.message || '重试失败')
+    scrapingJob.value = response.data
+    executeResult.value = null
+    startPolling()
+  } catch (error) {
+    logger.error('重试手动刮削失败:', error)
+    previewError.value = error.message || '重试失败'
+  } finally {
+    retrying.value = false
   }
 }
 
@@ -426,4 +619,5 @@ const goBack = () => {
 }
 
 onMounted(loadPage)
+onBeforeUnmount(stopPolling)
 </script>

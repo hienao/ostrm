@@ -8,8 +8,18 @@ import com.hienao.openlist2strm.exception.BusinessException;
 import com.hienao.openlist2strm.util.UrlEncoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -158,10 +168,76 @@ public class OpenlistApiService {
    * @return 所有文件和目录列表
    */
   public List<OpenlistFile> getAllFilesRecursively(OpenlistConfig config, String path) {
+    return getAllFilesRecursively(config, path, false);
+  }
+
+  /**
+   * 递归获取目录下的所有文件和目录
+   *
+   * @param config OpenList配置
+   * @param path 目录路径
+   * @param refresh 是否强制 OpenList 刷新目录缓存
+   * @return 所有文件和目录列表
+   */
+  public List<OpenlistFile> getAllFilesRecursively(
+      OpenlistConfig config, String path, boolean refresh) {
     List<OpenlistFile> allFiles = new ArrayList<>();
-    getAllFilesRecursively(config, path, allFiles);
+    getAllFilesRecursively(config, path, allFiles, refresh);
     return allFiles;
   }
+
+  /**
+   * 使用有界并发读取完整目录树。所有请求仍经过同一个配置级 QPS/QPM 限流器。
+   *
+   * @param maxConcurrency 最大并发目录请求数
+   */
+  public List<OpenlistFile> getAllFilesConcurrently(
+      OpenlistConfig config, String path, boolean refresh, int maxConcurrency) {
+    int concurrency = Math.max(1, Math.min(8, maxConcurrency));
+    if (concurrency == 1) {
+      return getAllFilesRecursively(config, path, refresh);
+    }
+
+    ExecutorService executor = Executors.newFixedThreadPool(concurrency);
+    CompletionService<DirectoryListing> completion = new ExecutorCompletionService<>(executor);
+    List<OpenlistFile> allFiles = new ArrayList<>();
+    int pending = 1;
+    completion.submit(
+        () -> new DirectoryListing(path, getDirectoryContents(config, path, refresh)));
+
+    try {
+      while (pending > 0) {
+        DirectoryListing listing = completion.take().get();
+        pending--;
+        for (OpenlistFile file : listing.files()) {
+          allFiles.add(file);
+          if ("folder".equals(file.getType())) {
+            String childPath =
+                file.getPath() == null || file.getPath().isBlank()
+                    ? listing.path() + "/" + file.getName()
+                    : file.getPath();
+            pending++;
+            completion.submit(
+                () ->
+                    new DirectoryListing(
+                        childPath, getDirectoryContents(config, childPath, refresh)));
+          }
+        }
+      }
+      allFiles.sort(Comparator.comparing(OpenlistFile::getPath));
+      return allFiles;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new BusinessException("并发读取 OpenList 目录时任务被中断", e);
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause() == null ? e : e.getCause();
+      throw new BusinessException("并发读取 OpenList 目录失败: " + cause.getMessage(), cause);
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private record DirectoryListing(String path, List<OpenlistFile> files) {}
 
   /**
    * 递归获取目录下的所有文件和目录（内部方法）
@@ -171,12 +247,12 @@ public class OpenlistApiService {
    * @param allFiles 累积的文件列表
    */
   private void getAllFilesRecursively(
-      OpenlistConfig config, String path, List<OpenlistFile> allFiles) {
+      OpenlistConfig config, String path, List<OpenlistFile> allFiles, boolean refresh) {
     try {
-      log.info("正在获取目录: {}", path);
+      log.debug("正在获取目录: {}", path);
 
       // 调用OpenList API获取当前目录内容
-      List<OpenlistFile> files = getDirectoryContents(config, path);
+      List<OpenlistFile> files = getDirectoryContents(config, path, refresh);
 
       for (OpenlistFile file : files) {
         // 添加到结果列表
@@ -188,7 +264,7 @@ public class OpenlistApiService {
           if (subPath == null || subPath.isEmpty()) {
             subPath = path + "/" + file.getName();
           }
-          getAllFilesRecursively(config, subPath, allFiles);
+          getAllFilesRecursively(config, subPath, allFiles, refresh);
         }
       }
 
@@ -206,6 +282,19 @@ public class OpenlistApiService {
    * @return 目录内容列表
    */
   public List<OpenlistFile> getDirectoryContents(OpenlistConfig config, String path) {
+    return getDirectoryContents(config, path, false);
+  }
+
+  /**
+   * 获取指定目录的内容
+   *
+   * @param config OpenList配置
+   * @param path 目录路径
+   * @param refresh 是否强制 OpenList 刷新目录缓存
+   * @return 目录内容列表
+   */
+  public List<OpenlistFile> getDirectoryContents(
+      OpenlistConfig config, String path, boolean refresh) {
     try {
       // 构建请求URL - 使用OpenList配置中的baseUrl作为API服务器地址
       String apiUrl = config.getBaseUrl();
@@ -229,8 +318,8 @@ public class OpenlistApiService {
       // 构建请求体
       String requestBody =
           String.format(
-              "{\"path\":\"%s\",\"password\":\"\",\"page\":1,\"per_page\":0,\"refresh\":false}",
-              path);
+              "{\"path\":\"%s\",\"password\":\"\",\"page\":1,\"per_page\":0,\"refresh\":%s}",
+              path, refresh);
 
       HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
 
@@ -287,7 +376,7 @@ public class OpenlistApiService {
         files.add(file);
       }
 
-      log.info("获取到 {} 个文件/目录: {}", files.size(), path);
+      log.debug("获取到 {} 个文件/目录: {}", files.size(), path);
 
       return files;
 
@@ -380,6 +469,47 @@ public class OpenlistApiService {
     }
   }
 
+  /** 将本地文件以流式方式上传到 OpenList，避免把图片完整加载到堆内存。 */
+  public void uploadFile(
+      OpenlistConfig config, String filePath, Path localFile, String contentType) {
+    try {
+      String apiUrl = buildApiUrl(config, "api/fs/put");
+      HttpHeaders headers = mutationHeaders(config);
+      headers.setContentType(
+          contentType == null || contentType.isBlank()
+              ? MediaType.APPLICATION_OCTET_STREAM
+              : MediaType.parseMediaType(contentType));
+      headers.set(
+          "File-Path", URLEncoder.encode(filePath, StandardCharsets.UTF_8).replace("+", "%20"));
+      headers.set("As-Task", "false");
+      headers.set("Overwrite", "true");
+      headers.setContentLength(Files.size(localFile));
+
+      apiRateLimiter.acquire(config, "/api/fs/put");
+      ResponseEntity<String> response =
+          restTemplate.execute(
+              java.net.URI.create(apiUrl),
+              HttpMethod.PUT,
+              request -> {
+                request.getHeaders().putAll(headers);
+                try (var input = Files.newInputStream(localFile)) {
+                  input.transferTo(request.getBody());
+                }
+              },
+              clientResponse ->
+                  ResponseEntity.status(clientResponse.getStatusCode())
+                      .headers(clientResponse.getHeaders())
+                      .body(
+                          new String(
+                              clientResponse.getBody().readAllBytes(), StandardCharsets.UTF_8)));
+      assertSuccessfulMutation(response, "上传");
+    } catch (BusinessException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new BusinessException("OpenList 文件上传失败: " + e.getMessage(), e);
+    }
+  }
+
   private String buildApiUrl(OpenlistConfig config, String endpoint) {
     String baseUrl = config.getBaseUrl();
     return (baseUrl.endsWith("/") ? baseUrl : baseUrl + "/") + endpoint;
@@ -415,45 +545,14 @@ public class OpenlistApiService {
    * @return 文件内容字节数组
    */
   public byte[] getFileContent(OpenlistConfig config, OpenlistFile file) {
-    // 默认使用URL编码（兼容STRM文件写入场景）
-    return getFileContent(config, file, true);
-  }
-
-  /**
-   * 获取文件内容（使用OpenlistFile对象，包含sign参数）
-   *
-   * @param config OpenList配置
-   * @param file OpenlistFile对象
-   * @param enableUrlEncoding 是否启用URL编码（false适用于刮削文件下载场景）
-   * @return 文件内容字节数组
-   */
-  public byte[] getFileContent(
-      OpenlistConfig config, OpenlistFile file, boolean enableUrlEncoding) {
     try {
-      // 使用OpenlistFile中的url字段，已包含sign参数
-      String encodedUrl;
+      String downloadUrl = file.getUrl();
       if (file.getSign() != null && !file.getSign().isEmpty()) {
-        // 构建完整URL
-        String completeUrl = file.getUrl() + "?sign=" + file.getSign();
-        if (enableUrlEncoding) {
-          // 使用统一的智能编码，避免双重编码（适用于STRM文件写入场景）
-          encodedUrl = UrlEncoder.encodeUrlSmart(completeUrl);
-        } else {
-          // 不进行URL编码，直接使用原始URL
-          encodedUrl = completeUrl;
-        }
-      } else {
-        if (enableUrlEncoding) {
-          // 使用统一编码标准确保中文路径正确处理
-          encodedUrl = UrlEncoder.encodeUrlSmart(file.getUrl());
-        } else {
-          // 不进行编码，直接使用原始URL
-          encodedUrl = file.getUrl();
-        }
+        downloadUrl = downloadUrl + "?sign=" + file.getSign();
       }
 
-      log.debug("下载文件请求 - 文件名: {}, 完整URL: {}", file.getName(), encodedUrl);
-      return downloadFileWithUrl(config, file, encodedUrl);
+      log.debug("下载文件请求 - 文件名: {}, 完整URL: {}", file.getName(), downloadUrl);
+      return downloadFileWithUrl(config, file, downloadUrl);
     } catch (Exception e) {
       log.error("下载文件异常: {}, 错误: {}", file.getName(), e.getMessage());
       return null;
@@ -461,16 +560,95 @@ public class OpenlistApiService {
   }
 
   /**
-   * 使用预编码的URL下载文件内容 调用方负责对URL进行编码，此方法直接使用传入的URL
+   * 使用指定 URL 下载文件内容。URL 可以是原始地址或已编码地址，实际请求前会统一进行幂等规范化。
    *
    * @param config OpenList配置
    * @param file OpenlistFile对象（仅用于日志记录）
-   * @param encodedUrl 已编码的完整下载URL
+   * @param encodedUrl 原始或已编码的完整下载URL
    * @return 文件内容字节数组
    */
   public byte[] downloadWithEncodedUrl(
       OpenlistConfig config, OpenlistFile file, String encodedUrl) {
     return downloadFileWithUrl(config, file, encodedUrl);
+  }
+
+  /** 将 OpenList 文件直接流式写入目标文件，下载成功后原子替换目标。 */
+  public boolean downloadToFile(OpenlistConfig config, OpenlistFile file, Path targetFile) {
+    String downloadUrl;
+    if (file.getSign() != null && !file.getSign().isEmpty()) {
+      downloadUrl = file.getUrl() + "?sign=" + file.getSign();
+    } else {
+      downloadUrl = file.getUrl();
+    }
+    return downloadUrlToFile(config, file, downloadUrl, targetFile);
+  }
+
+  /** 使用调用方准备好的下载 URL 流式写入目标文件。 */
+  public boolean downloadToFile(
+      OpenlistConfig config, OpenlistFile file, String downloadUrl, Path targetFile) {
+    return downloadUrlToFile(config, file, downloadUrl, targetFile);
+  }
+
+  private boolean downloadUrlToFile(
+      OpenlistConfig config, OpenlistFile file, String downloadUrl, Path targetFile) {
+    Path temporaryFile = null;
+    try {
+      Path parent = targetFile.getParent();
+      if (parent != null) {
+        Files.createDirectories(parent);
+      }
+      temporaryFile =
+          targetFile.resolveSibling(
+              targetFile.getFileName() + ".part-" + UUID.randomUUID().toString().substring(0, 8));
+
+      HttpHeaders headers = new HttpHeaders();
+      headers.set("User-Agent", AppConstants.USER_AGENT);
+      if (config.getToken() != null && !config.getToken().isEmpty()) {
+        headers.set("Authorization", config.getToken());
+      }
+
+      Path outputFile = temporaryFile;
+      java.net.URI downloadUri = createDownloadUri(downloadUrl);
+      Boolean downloaded =
+          restTemplate.execute(
+              downloadUri,
+              HttpMethod.GET,
+              request -> request.getHeaders().putAll(headers),
+              response -> {
+                if (!response.getStatusCode().is2xxSuccessful()) {
+                  return false;
+                }
+                try (var body = response.getBody()) {
+                  Files.copy(body, outputFile, StandardCopyOption.REPLACE_EXISTING);
+                }
+                return Files.size(outputFile) > 0;
+              });
+
+      if (!Boolean.TRUE.equals(downloaded)) {
+        Files.deleteIfExists(temporaryFile);
+        return false;
+      }
+      try {
+        Files.move(
+            temporaryFile,
+            targetFile,
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING);
+      } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+        Files.move(temporaryFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
+      }
+      return true;
+    } catch (Exception e) {
+      log.warn("流式下载文件失败: {}, 错误: {}", file.getName(), e.getMessage());
+      if (temporaryFile != null) {
+        try {
+          Files.deleteIfExists(temporaryFile);
+        } catch (Exception cleanupError) {
+          log.debug("清理下载临时文件失败: {}", temporaryFile, cleanupError);
+        }
+      }
+      return false;
+    }
   }
 
   /**
@@ -498,7 +676,7 @@ public class OpenlistApiService {
       // 发送GET请求获取文件内容 - 使用URI对象避免Spring将{...}解析为模板变量
       ResponseEntity<byte[]> response =
           restTemplate.exchange(
-              java.net.URI.create(encodedUrl), HttpMethod.GET, entity, byte[].class);
+              createDownloadUri(encodedUrl), HttpMethod.GET, entity, byte[].class);
 
       log.debug(
           "文件下载响应 - 状态码: {}, Content-Type: {}, Headers: {}",
@@ -546,7 +724,7 @@ public class OpenlistApiService {
             if (isExternalRedirect) {
               // 对于外部CDN，使用URI直接请求，避免RestTemplate自动编码导致签名失效
               try {
-                java.net.URI uri = java.net.URI.create(redirectUrl);
+                java.net.URI uri = createDownloadUri(redirectUrl);
                 redirectResponse =
                     restTemplate.exchange(uri, HttpMethod.GET, redirectEntity, byte[].class);
                 log.debug("使用URI直接请求外部CDN，避免自动编码: {}", uri);
@@ -655,7 +833,7 @@ public class OpenlistApiService {
       // 发送GET请求获取文件内容 - 使用URI对象避免Spring将{...}解析为模板变量
       ResponseEntity<byte[]> response =
           restTemplate.exchange(
-              java.net.URI.create(encodedUrl), HttpMethod.GET, entity, byte[].class);
+              createDownloadUri(encodedUrl), HttpMethod.GET, entity, byte[].class);
 
       log.debug(
           "文件下载响应 - 状态码: {}, Content-Type: {}, Headers: {}",
@@ -703,7 +881,7 @@ public class OpenlistApiService {
             if (isExternalRedirect) {
               // 对于外部CDN，使用URI直接请求，避免RestTemplate自动编码导致签名失效
               try {
-                java.net.URI uri = java.net.URI.create(redirectUrl);
+                java.net.URI uri = createDownloadUri(redirectUrl);
                 redirectResponse =
                     restTemplate.exchange(uri, HttpMethod.GET, redirectEntity, byte[].class);
                 log.debug("使用URI直接请求外部CDN，避免自动编码: {}", uri);
@@ -777,6 +955,10 @@ public class OpenlistApiService {
       log.error("下载文件异常: {}, 错误: {}", filePath, e.getMessage(), e);
       return null;
     }
+  }
+
+  private java.net.URI createDownloadUri(String downloadUrl) {
+    return java.net.URI.create(UrlEncoder.encodeUrlSmart(downloadUrl));
   }
 
   /**

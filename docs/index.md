@@ -18,11 +18,13 @@ features:
   - title: 🎬 STRM 文件生成
     details: 自动将 OpenList 文件列表转换为 STRM 流媒体文件，支持多种媒体格式
   - title: 📋 任务管理系统
-    details: 完整的 Web 界面，支持任务的创建、编辑、删除和状态监控
+    details: 完整的 Web 界面，支持任务创建、目录结构检查、手动刮削和状态监控
   - title: ⏰ 定时任务调度
     details: 基于 Cron 表达式的自动化执行，支持增量和全量更新模式
   - title: 🔍 AI 智能刮削
     details: 可选的智能媒体信息刮削功能，自动获取电影和电视剧元数据
+  - title: 🧹 媒体库维护
+    details: 按需检查异常目录，预览并重命名媒体目录、季目录和文件，失败后可继续执行
   - title: 🖼️ 图片文件下载
     details: 自动下载海报、背景图和缩略图，支持本地、OpenList 和刮削三级优先级
   - title: 📄 字幕文件保留
