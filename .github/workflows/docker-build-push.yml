@@ -264,16 +264,17 @@ jobs:
       if: needs.build-amd64.outputs.is_beta != 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ needs.build-amd64.outputs.version }}
+        CHANGELOG: ${{ steps.github_release.outputs.changelog }}
       run: |
-        VERSION="${{ needs.build-amd64.outputs.version }}"
-        CHANGELOG="${{ steps.github_release.outputs.changelog }}"
         if [ -z "$CHANGELOG" ] || [ "$CHANGELOG" = "- No changes" ]; then
           CHANGELOG="Release ${VERSION}"
         fi
+        printf '%s\n' "$CHANGELOG" > release-notes.md
         gh release create "${VERSION}" \
           --target main \
           --title "Release ${VERSION}" \
-          --notes "${CHANGELOG}" \
+          --notes-file release-notes.md \
           --latest \
           "ostrm-${VERSION}-source.zip"
 
