@@ -1,6 +1,7 @@
 package com.hienao.openlist2strm.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.hienao.openlist2strm.dto.media.MediaInfo;
@@ -15,6 +16,7 @@ class TaskMediaParserTest {
     assertEquals(3, TaskMediaParser.parseSeasonNumber("第3季"));
     assertEquals(0, TaskMediaParser.parseSeasonNumber("Specials"));
     assertEquals(0, TaskMediaParser.parseSeasonNumber("特别篇"));
+    assertNull(TaskMediaParser.parseSeasonNumber("黑袍纠察队 第四季 1080p Remux"));
   }
 
   @Test

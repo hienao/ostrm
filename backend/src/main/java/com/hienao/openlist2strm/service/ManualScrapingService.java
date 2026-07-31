@@ -22,6 +22,7 @@ import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
+import com.hienao.openlist2strm.util.SeasonDirectoryNameParser;
 import com.hienao.openlist2strm.util.TaskMediaParser;
 import com.hienao.openlist2strm.util.TmdbIdExtractor;
 import java.io.IOException;
@@ -58,6 +59,7 @@ public class ManualScrapingService {
   private final TmdbApiService tmdbApiService;
   private final NfoGeneratorService nfoGeneratorService;
   private final CoverImageService coverImageService;
+  private final DataReportService dataReportService;
   private final ObjectMapper objectMapper;
   private final Cache<PreviewCacheKey, PreviewSnapshot> previewCache =
       Caffeine.newBuilder().maximumSize(200).expireAfterWrite(Duration.ofMinutes(5)).build();
@@ -650,28 +652,7 @@ public class ManualScrapingService {
     String directoryName = buildDirectoryName(title, year, tmdbId);
     List<RenameItem> seasonDirectories =
         context.libraryType().isTvLike()
-            ? entries.stream()
-                .filter(entry -> "folder".equals(entry.getType()))
-                .filter(
-                    entry ->
-                        normalizePath(selectedPath)
-                            .equals(normalizePath(parentPath(entry.getPath()))))
-                .map(
-                    entry -> {
-                      Integer season = TaskMediaParser.parseSeasonNumber(entry.getName());
-                      return season == null
-                          ? null
-                          : RenameItem.builder()
-                              .sourcePath(entry.getPath())
-                              .sourceName(entry.getName())
-                              .targetName(String.format("Season %02d", season))
-                              .build();
-                    })
-                .filter(java.util.Objects::nonNull)
-                .sorted(
-                    Comparator.comparing(RenameItem::getTargetName)
-                        .thenComparing(RenameItem::getSourcePath))
-                .toList()
+            ? buildSeasonDirectoryRenames(context, selectedPath, entries)
             : List.of();
     List<RenameItem> files = new ArrayList<>();
     List<String> targetBases = new ArrayList<>();
@@ -738,6 +719,59 @@ public class ManualScrapingService {
               .build());
     }
     return new RenamePlan(directoryName, seasonDirectories, files);
+  }
+
+  private List<RenameItem> buildSeasonDirectoryRenames(
+      Context context, String selectedPath, List<OpenlistApiService.OpenlistFile> entries) {
+    List<RenameItem> seasonDirectories = new ArrayList<>();
+    for (OpenlistApiService.OpenlistFile entry : entries) {
+      if (!"folder".equals(entry.getType())
+          || !normalizePath(selectedPath).equals(normalizePath(parentPath(entry.getPath())))) {
+        continue;
+      }
+
+      SeasonDirectoryNameParser.Result result =
+          SeasonDirectoryNameParser.parseForRename(entry.getName());
+      if (result.matched()) {
+        seasonDirectories.add(
+            RenameItem.builder()
+                .sourcePath(entry.getPath())
+                .sourceName(entry.getName())
+                .targetName(String.format("Season %02d", result.seasonNumber()))
+                .build());
+      } else if (result.shouldReportFailure()) {
+        reportSeasonDirectoryMatchFailure(context, entry.getName(), result);
+      }
+    }
+    return seasonDirectories.stream()
+        .sorted(
+            Comparator.comparing(RenameItem::getTargetName)
+                .thenComparing(RenameItem::getSourcePath))
+        .toList();
+  }
+
+  private void reportSeasonDirectoryMatchFailure(
+      Context context, String directoryName, SeasonDirectoryNameParser.Result result) {
+    log.warn(
+        "季目录识别失败，跳过重命名: taskId={}, directory={}, reason={}, detectedMarkers={}, detectedSeasons={}",
+        context.task().getId(),
+        directoryName,
+        result.failureReason(),
+        result.detectedMarkers(),
+        result.detectedSeasons());
+
+    if (!systemConfigService.isDataReportEnabled()) {
+      return;
+    }
+    Map<String, Object> properties = new LinkedHashMap<>();
+    properties.put("source", "manual_scraping");
+    properties.put("task_id", context.task().getId());
+    properties.put("library_type", context.libraryType().value());
+    properties.put("directory_name", directoryName);
+    properties.put("failure_reason", result.failureReason());
+    properties.put("detected_markers", result.detectedMarkers());
+    properties.put("detected_seasons", result.detectedSeasons());
+    dataReportService.reportEvent("manual_season_directory_match_failed", properties);
   }
 
   private boolean isGeneratedTargetName(String currentName, String targetBase, String extension) {
