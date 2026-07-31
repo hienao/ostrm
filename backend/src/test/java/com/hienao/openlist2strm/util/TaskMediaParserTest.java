@@ -9,6 +9,15 @@ import org.junit.jupiter.api.Test;
 class TaskMediaParserTest {
 
   @Test
+  void recognizesSeasonDirectoryAliasesAndSpecials() {
+    assertEquals(1, TaskMediaParser.parseSeasonNumber("Season 1"));
+    assertEquals(2, TaskMediaParser.parseSeasonNumber("S02"));
+    assertEquals(3, TaskMediaParser.parseSeasonNumber("第3季"));
+    assertEquals(0, TaskMediaParser.parseSeasonNumber("Specials"));
+    assertEquals(0, TaskMediaParser.parseSeasonNumber("特别篇"));
+  }
+
+  @Test
   void movieUsesImmediateParentDirectory() {
     MediaInfo result =
         parse("Inception.1080p.mkv", "Inception (2010)/Inception.1080p.mkv", "movie");

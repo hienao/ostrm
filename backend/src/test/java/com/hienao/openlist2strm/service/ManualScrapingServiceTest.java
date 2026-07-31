@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,12 +16,19 @@ import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.Preview;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.PreviewRequest;
 import com.hienao.openlist2strm.dto.tmdb.TmdbMovieDetail;
 import com.hienao.openlist2strm.dto.tmdb.TmdbSearchResponse;
+import com.hienao.openlist2strm.dto.tmdb.TmdbTvDetail;
+import com.hienao.openlist2strm.entity.ManualScrapingJob;
+import com.hienao.openlist2strm.entity.ManualScrapingJobStage;
 import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
+import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.InOrder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class ManualScrapingServiceTest {
 
@@ -30,6 +38,8 @@ class ManualScrapingServiceTest {
   private StrmFileService strmFileService;
   private TmdbApiService tmdbApiService;
   private ManualScrapingService service;
+
+  @TempDir Path tempDirectory;
 
   @BeforeEach
   void setUp() {
@@ -48,7 +58,9 @@ class ManualScrapingServiceTest {
             mock(AiFileNameRecognitionService.class),
             tmdbApiService,
             mock(NfoGeneratorService.class),
-            mock(CoverImageService.class));
+            mock(CoverImageService.class),
+            new com.fasterxml.jackson.databind.ObjectMapper());
+    ReflectionTestUtils.setField(service, "applicationDataPath", tempDirectory.toString());
   }
 
   @Test
@@ -175,6 +187,125 @@ class ManualScrapingServiceTest {
     assertEquals(targetBase + ".mkv", preview.getProposedFileRenames().get(1).getTargetName());
   }
 
+  @Test
+  void previewsCanonicalSeasonDirectoryNames() {
+    stubTvDirectory();
+    TmdbTvDetail detail = tvDetail();
+    when(tmdbApiService.getTvDetail(1399)).thenReturn(detail);
+
+    PreviewRequest request = new PreviewRequest();
+    request.setDirectoryPath("/tv/Show");
+    request.setTmdbId(1399);
+
+    Preview preview = service.preview(7L, request);
+
+    assertEquals(3, preview.getProposedDirectoryRenames().size());
+    assertEquals("Season 00", preview.getProposedDirectoryRenames().get(0).getTargetName());
+    assertEquals("Season 01", preview.getProposedDirectoryRenames().get(1).getTargetName());
+    assertEquals("Season 02", preview.getProposedDirectoryRenames().get(2).getTargetName());
+    assertEquals("Show - S01E01.mkv", preview.getProposedFileRenames().get(0).getTargetName());
+  }
+
+  @Test
+  void renamesSeriesRootThenSeasonThenMediaFile() {
+    stubTvDirectory();
+    TmdbTvDetail detail = tvDetail();
+    when(tmdbApiService.getTvDetail(1399)).thenReturn(detail);
+    OpenlistConfig config = openlistConfigService.getById(3L);
+    when(openlistApiService.getDirectoryContents(config, "/tv"))
+        .thenReturn(List.of(entry("Show", "/tv/Show", "folder")));
+
+    PreviewRequest previewRequest = new PreviewRequest();
+    previewRequest.setDirectoryPath("/tv/Show");
+    previewRequest.setTmdbId(1399);
+    service.preview(7L, previewRequest);
+
+    var executeRequest = new com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteRequest();
+    executeRequest.setDirectoryPath("/tv/Show");
+    executeRequest.setMediaType("tv");
+    executeRequest.setTmdbId(1399);
+    executeRequest.setRenameMedia(true);
+
+    var result = service.execute(7L, executeRequest);
+
+    InOrder order = inOrder(openlistApiService);
+    order.verify(openlistApiService).renameEntry(config, "/tv/Show", "Show (2011) {tmdbid-1399}");
+    order
+        .verify(openlistApiService)
+        .renameEntry(config, "/tv/Show (2011) {tmdbid-1399}/S1", "Season 01");
+    order
+        .verify(openlistApiService)
+        .renameEntry(
+            config, "/tv/Show (2011) {tmdbid-1399}/Season 01/raw.S01E01.mkv", "Show - S01E01.mkv");
+    assertEquals(4, result.getRenamedDirectoryCount());
+    assertEquals(3, result.getRenamedFileCount());
+  }
+
+  @Test
+  void resumesSeasonRenameAfterSeriesRootWasAlreadyRenamed() {
+    TaskConfig task =
+        new TaskConfig()
+            .setId(7L)
+            .setTaskName("电视剧")
+            .setPath("/tv")
+            .setLibraryType("tv")
+            .setOpenlistConfigId(3L);
+    OpenlistConfig config = new OpenlistConfig().setId(3L);
+    String finalRoot = "/tv/Show (2011) {tmdbid-1399}";
+    when(taskConfigService.getById(7L)).thenReturn(task);
+    when(openlistConfigService.getById(3L)).thenReturn(config);
+    when(tmdbApiService.getTvDetail(1399)).thenReturn(tvDetail());
+    when(openlistApiService.getDirectoryContents(config, "/tv"))
+        .thenReturn(List.of(entry(lastSegment(finalRoot), finalRoot, "folder")));
+    List<OpenlistApiService.OpenlistFile> currentEntries =
+        List.of(
+            entry("S1", finalRoot + "/S1", "folder"),
+            entry("raw.S01E01.mkv", finalRoot + "/S1/raw.S01E01.mkv", "file"));
+    when(openlistApiService.getAllFilesRecursively(config, finalRoot)).thenReturn(currentEntries);
+    when(strmFileService.isVideoFile(anyString())).thenReturn(true);
+
+    String persistedPlan =
+        "{\"directoryName\":\"Show (2011) {tmdbid-1399}\","
+            + "\"seasonDirectories\":[{\"sourcePath\":\"/tv/Show/S1\",\"sourceName\":\"S1\","
+            + "\"targetName\":\"Season 01\"}],"
+            + "\"files\":[{\"sourcePath\":\"/tv/Show/S1/raw.S01E01.mkv\","
+            + "\"sourceName\":\"raw.S01E01.mkv\",\"targetName\":\"Show - S01E01.mkv\"}]}";
+    ManualScrapingJob job =
+        new ManualScrapingJob()
+            .setId(99L)
+            .setTaskId(7L)
+            .setDirectoryPath("/tv/Show")
+            .setFinalDirectoryPath(finalRoot)
+            .setMediaType("tv")
+            .setTmdbId(1399)
+            .setRenameMedia(true)
+            .setStage(ManualScrapingJobStage.RENAMING.name())
+            .setRenamePlan(persistedPlan)
+            .setRenameOperationIndex(1)
+            .setRenamedDirectoryCount(1)
+            .setRenamedFileCount(0);
+
+    var result =
+        service.executeJob(
+            job,
+            (stage,
+                progress,
+                message,
+                finalPath,
+                directoryCount,
+                fileCount,
+                renamePlan,
+                operationIndex) -> {});
+
+    verify(openlistApiService, never())
+        .renameEntry(config, "/tv/Show", "Show (2011) {tmdbid-1399}");
+    verify(openlistApiService).renameEntry(config, finalRoot + "/S1", "Season 01");
+    verify(openlistApiService)
+        .renameEntry(config, finalRoot + "/Season 01/raw.S01E01.mkv", "Show - S01E01.mkv");
+    assertEquals(2, result.getRenamedDirectoryCount());
+    assertEquals(1, result.getRenamedFileCount());
+  }
+
   private void stubMovieTask() {
     TaskConfig task =
         new TaskConfig()
@@ -194,6 +325,44 @@ class ManualScrapingServiceTest {
     when(openlistApiService.getAllFilesRecursively(config, "/movies/镖人"))
         .thenReturn(List.of(entry("movie.mkv", "/movies/镖人/movie.mkv", "file")));
     when(strmFileService.isVideoFile("movie.mkv")).thenReturn(true);
+  }
+
+  private void stubTvDirectory() {
+    TaskConfig task =
+        new TaskConfig()
+            .setId(7L)
+            .setTaskName("电视剧")
+            .setPath("/tv")
+            .setLibraryType("tv")
+            .setOpenlistConfigId(3L);
+    OpenlistConfig config = new OpenlistConfig().setId(3L);
+    when(taskConfigService.getById(7L)).thenReturn(task);
+    when(openlistConfigService.getById(3L)).thenReturn(config);
+    List<OpenlistApiService.OpenlistFile> entries =
+        List.of(
+            entry("S1", "/tv/Show/S1", "folder"),
+            entry("第2季", "/tv/Show/第2季", "folder"),
+            entry("Specials", "/tv/Show/Specials", "folder"),
+            entry("raw.S01E01.mkv", "/tv/Show/S1/raw.S01E01.mkv", "file"),
+            entry("raw.S02E01.mkv", "/tv/Show/第2季/raw.S02E01.mkv", "file"),
+            entry("raw.S00E01.mkv", "/tv/Show/Specials/raw.S00E01.mkv", "file"));
+    when(openlistApiService.getAllFilesRecursively(config, "/tv/Show")).thenReturn(entries);
+    when(openlistApiService.getDirectoryContents(config, "/tv/Show"))
+        .thenReturn(entries.subList(0, 3));
+    when(strmFileService.isVideoFile(anyString()))
+        .thenAnswer(invocation -> invocation.getArgument(0, String.class).endsWith(".mkv"));
+  }
+
+  private TmdbTvDetail tvDetail() {
+    TmdbTvDetail detail = new TmdbTvDetail();
+    detail.setId(1399);
+    detail.setName("Show");
+    detail.setFirstAirDate("2011-04-17");
+    return detail;
+  }
+
+  private String lastSegment(String path) {
+    return path.substring(path.lastIndexOf('/') + 1);
   }
 
   private OpenlistApiService.OpenlistFile entry(String name, String path, String type) {

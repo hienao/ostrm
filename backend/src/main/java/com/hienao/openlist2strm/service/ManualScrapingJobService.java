@@ -73,6 +73,8 @@ public class ManualScrapingJobService {
             .setStage(ManualScrapingJobStage.PREPARING.name())
             .setProgress(0)
             .setMessage("等待执行")
+            .setRenameOperationIndex(0)
+            .setRenamedDirectoryCount(0)
             .setRenamedFileCount(0)
             .setUploadedFiles("[]");
     try {
@@ -141,8 +143,24 @@ public class ManualScrapingJobService {
       ExecuteResult result =
           manualScrapingService.executeJob(
               job,
-              (stage, progress, message, finalPath, renamedCount) ->
-                  checkpoint(jobId, stage, progress, message, finalPath, renamedCount));
+              (stage,
+                  progress,
+                  message,
+                  finalPath,
+                  renamedDirectoryCount,
+                  renamedFileCount,
+                  renamePlan,
+                  renameOperationIndex) ->
+                  checkpoint(
+                      jobId,
+                      stage,
+                      progress,
+                      message,
+                      finalPath,
+                      renamedDirectoryCount,
+                      renamedFileCount,
+                      renamePlan,
+                      renameOperationIndex));
       ManualScrapingJob completed = jobMapper.selectById(jobId);
       completed
           .setStatus(ManualScrapingJobStatus.SUCCEEDED.name())
@@ -151,6 +169,7 @@ public class ManualScrapingJobService {
           .setMessage(result.getMessage())
           .setErrorMessage(null)
           .setFinalDirectoryPath(result.getFinalDirectoryPath())
+          .setRenamedDirectoryCount(result.getRenamedDirectoryCount())
           .setRenamedFileCount(result.getRenamedFileCount())
           .setUploadedFiles(writeFiles(result.getUploadedFiles()))
           .setCompletedAt(LocalDateTime.now());
@@ -167,7 +186,10 @@ public class ManualScrapingJobService {
       int progress,
       String message,
       String finalPath,
-      int renamedCount) {
+      int renamedDirectoryCount,
+      int renamedFileCount,
+      String renamePlan,
+      int renameOperationIndex) {
     ManualScrapingJob job = jobMapper.selectById(jobId);
     if (job == null || job.statusValue() != ManualScrapingJobStatus.RUNNING) {
       throw new BusinessException("手动刮削作业状态异常");
@@ -176,7 +198,10 @@ public class ManualScrapingJobService {
         .setProgress(Math.max(0, Math.min(100, progress)))
         .setMessage(message)
         .setFinalDirectoryPath(finalPath)
-        .setRenamedFileCount(renamedCount);
+        .setRenamedDirectoryCount(renamedDirectoryCount)
+        .setRenamedFileCount(renamedFileCount)
+        .setRenamePlan(renamePlan)
+        .setRenameOperationIndex(renameOperationIndex);
     jobMapper.updateCheckpoint(job);
   }
 
@@ -220,6 +245,8 @@ public class ManualScrapingJobService {
         .progress(job.getProgress() == null ? 0 : job.getProgress())
         .message(job.getMessage())
         .errorMessage(job.getErrorMessage())
+        .renamedDirectoryCount(
+            job.getRenamedDirectoryCount() == null ? 0 : job.getRenamedDirectoryCount())
         .renamedFileCount(job.getRenamedFileCount() == null ? 0 : job.getRenamedFileCount())
         .uploadedFiles(readFiles(job.getUploadedFiles()))
         .createdAt(job.getCreatedAt())

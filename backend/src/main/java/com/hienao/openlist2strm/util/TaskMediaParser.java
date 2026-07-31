@@ -17,6 +17,8 @@ public final class TaskMediaParser {
   private static final Pattern SEASON_PATTERN =
       Pattern.compile("(?i)^(?:season|s)[\\s._-]*(\\d{1,2})$");
   private static final Pattern CHINESE_SEASON_PATTERN = Pattern.compile("^第(\\d{1,2})季$");
+  private static final Pattern SPECIALS_PATTERN =
+      Pattern.compile("(?i)^(?:specials?|special episodes?|特别篇|特别季|特典)$");
   private static final Pattern SEASON_EPISODE_PATTERN =
       Pattern.compile("(?i)(?:^|[\\s._\\-\\[])S(\\d{1,2})[\\s._-]*E(\\d{1,4})(?:\\D|$)");
   private static final Pattern X_EPISODE_PATTERN =
@@ -190,13 +192,24 @@ public final class TaskMediaParser {
     return value == 480 || value == 720 || value == 1080 || value == 2160;
   }
 
-  private static Integer parseSeason(String directory) {
+  /** 从常见中英文季目录名中提取季号，特别篇统一为第 0 季。 */
+  public static Integer parseSeasonNumber(String directory) {
+    if (directory == null || directory.isBlank()) {
+      return null;
+    }
     Matcher matcher = SEASON_PATTERN.matcher(directory.trim());
     if (matcher.matches()) {
       return Integer.parseInt(matcher.group(1));
     }
     matcher = CHINESE_SEASON_PATTERN.matcher(directory.trim());
-    return matcher.matches() ? Integer.parseInt(matcher.group(1)) : null;
+    if (matcher.matches()) {
+      return Integer.parseInt(matcher.group(1));
+    }
+    return SPECIALS_PATTERN.matcher(directory.trim()).matches() ? 0 : null;
+  }
+
+  private static Integer parseSeason(String directory) {
+    return parseSeasonNumber(directory);
   }
 
   /** 判断目录名是否为任务目录结构支持的季目录。 */

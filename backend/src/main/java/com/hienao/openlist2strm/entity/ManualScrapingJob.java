@@ -20,6 +20,9 @@ public class ManualScrapingJob {
   private Integer progress;
   private String message;
   private String errorMessage;
+  private String renamePlan;
+  private Integer renameOperationIndex;
+  private Integer renamedDirectoryCount;
   private Integer renamedFileCount;
   private String uploadedFiles;
   private LocalDateTime createdAt;
