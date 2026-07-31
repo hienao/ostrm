@@ -15,6 +15,7 @@ export default defineConfig({
           { text: '快速开始', link: '/quick-start' },
           { text: '添加OpenList', link: '/add-openlist' },
           { text: '添加任务', link: '/add-task' },
+          { text: '目录检查与手动刮削', link: '/media-maintenance' },
           { text: '系统设置', link: '/system-config' }
         ] },
       { text: '特殊配置项说明', items: [
@@ -33,6 +34,7 @@ export default defineConfig({
           { text: '快速开始', link: '/quick-start' },
           { text: '添加OpenList', link: '/add-openlist' },
           { text: '添加任务', link: '/add-task' },
+          { text: '目录检查与手动刮削', link: '/media-maintenance' },
           { text: '系统设置', link: '/system-config' }
         ] },
       { text: '特殊配置项说明', items: [
