@@ -45,6 +45,12 @@
               <span class="text-xs text-white/35">#{{ scrapingJob.id }} · {{ jobStageLabel(scrapingJob.stage) }}</span>
             </div>
             <p class="mt-2 text-sm text-white/65">{{ scrapingJob.message }}</p>
+            <p
+              v-if="scrapingJob.renamedDirectoryCount || scrapingJob.renamedFileCount"
+              class="mt-2 text-xs text-white/45"
+            >
+              已重命名 {{ scrapingJob.renamedDirectoryCount || 0 }} 个目录、{{ scrapingJob.renamedFileCount || 0 }} 个媒体文件
+            </p>
             <p v-if="scrapingJob.errorMessage" class="mt-2 break-all text-sm text-red-200">
               {{ scrapingJob.errorMessage }}
             </p>
@@ -237,7 +243,10 @@
               <span>
                 <span class="block text-sm font-medium text-white">重命名媒体目录和文件</span>
                 <span class="mt-1 block text-xs leading-5 text-amber-200/65">
-                  确认后会先重命名文件夹，再重命名其中的媒体文件。该操作会直接修改 OpenList 源目录。
+                  {{ preview.mediaType === 'tv'
+                    ? '确认后会依次重命名剧集根目录、季目录和媒体文件。'
+                    : '确认后会依次重命名媒体目录和媒体文件。' }}
+                  该操作会直接修改 OpenList 源目录。
                 </span>
               </span>
             </label>
@@ -249,12 +258,30 @@
           <div v-if="renameMedia" class="space-y-3">
             <h3 class="text-sm font-medium text-white/80">重命名预览</h3>
             <div class="rounded-lg bg-white/[0.03] p-3 text-sm">
-              <span class="text-white/40">文件夹：</span>
+              <span class="text-white/40">媒体目录：</span>
               <span class="break-all font-mono text-white/75">{{ selectedDirectory.name }}</span>
               <span class="mx-2 text-white/25">→</span>
               <span class="break-all font-mono text-emerald-300">{{ preview.proposedDirectoryName }}</span>
             </div>
+            <div v-if="preview.proposedDirectoryRenames?.length" class="space-y-1">
+              <div class="px-3 text-xs text-white/40">季目录</div>
+              <div
+                v-for="item in preview.proposedDirectoryRenames"
+                :key="item.sourcePath"
+                class="grid gap-1 rounded-lg px-3 py-2 text-xs sm:grid-cols-[1fr_auto_1fr]"
+              >
+                <span class="break-all font-mono text-white/45">{{ item.sourceName }}</span>
+                <span class="hidden text-white/20 sm:block">→</span>
+                <span
+                  class="break-all font-mono"
+                  :class="item.sourceName === item.targetName ? 'text-white/35' : 'text-emerald-300'"
+                >
+                  {{ item.targetName }}{{ item.sourceName === item.targetName ? '（保持不变）' : '' }}
+                </span>
+              </div>
+            </div>
             <div class="max-h-48 space-y-1 overflow-y-auto">
+              <div class="px-3 text-xs text-white/40">媒体文件</div>
               <div
                 v-for="item in preview.proposedFileRenames"
                 :key="item.sourcePath"
@@ -481,7 +508,10 @@ const toggleManualSearch = () => {
 
 const executeScraping = async () => {
   if (!preview.value || isJobActive.value) return
-  const action = renameMedia.value ? '重命名源目录和文件，并上传刮削信息' : '上传刮削信息'
+  const renameAction = preview.value.mediaType === 'tv'
+    ? '重命名源目录、季目录和文件，并上传刮削信息'
+    : '重命名源目录和文件，并上传刮削信息'
+  const action = renameMedia.value ? renameAction : '上传刮削信息'
   if (!confirm(`确认${action}？`)) return
 
   executing.value = true

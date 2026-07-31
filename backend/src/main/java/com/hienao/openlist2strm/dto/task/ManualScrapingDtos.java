@@ -6,8 +6,10 @@ import jakarta.validation.constraints.Positive;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /** 手动刮削流程使用的请求与响应对象。 */
 public final class ManualScrapingDtos {
@@ -67,6 +69,7 @@ public final class ManualScrapingDtos {
     private String backdropUrl;
     private int videoFileCount;
     private String proposedDirectoryName;
+    @Builder.Default private List<RenameItem> proposedDirectoryRenames = new ArrayList<>();
     @Builder.Default private List<RenameItem> proposedFileRenames = new ArrayList<>();
     @Builder.Default private List<String> generatedFiles = new ArrayList<>();
     @Builder.Default private List<String> renamedGeneratedFiles = new ArrayList<>();
@@ -74,6 +77,8 @@ public final class ManualScrapingDtos {
 
   @Data
   @Builder
+  @NoArgsConstructor
+  @AllArgsConstructor
   public static class RenameItem {
     private String sourcePath;
     private String sourceName;
@@ -95,6 +100,7 @@ public final class ManualScrapingDtos {
   @Builder
   public static class ExecuteResult {
     private String finalDirectoryPath;
+    private int renamedDirectoryCount;
     private int renamedFileCount;
     @Builder.Default private List<String> uploadedFiles = new ArrayList<>();
     private String message;
@@ -115,6 +121,7 @@ public final class ManualScrapingDtos {
     private int progress;
     private String message;
     private String errorMessage;
+    private int renamedDirectoryCount;
     private int renamedFileCount;
     @Builder.Default private List<String> uploadedFiles = new ArrayList<>();
     private LocalDateTime createdAt;

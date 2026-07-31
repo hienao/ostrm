@@ -15,6 +15,9 @@
         <result column="progress" property="progress" jdbcType="INTEGER"/>
         <result column="message" property="message" jdbcType="VARCHAR"/>
         <result column="error_message" property="errorMessage" jdbcType="VARCHAR"/>
+        <result column="rename_plan" property="renamePlan" jdbcType="VARCHAR"/>
+        <result column="rename_operation_index" property="renameOperationIndex" jdbcType="INTEGER"/>
+        <result column="renamed_directory_count" property="renamedDirectoryCount" jdbcType="INTEGER"/>
         <result column="renamed_file_count" property="renamedFileCount" jdbcType="INTEGER"/>
         <result column="uploaded_files" property="uploadedFiles" jdbcType="VARCHAR"/>
         <result column="created_at" property="createdAt" jdbcType="TIMESTAMP"/>
@@ -25,7 +28,8 @@
 
     <sql id="JobColumns">
         id, task_id, directory_path, final_directory_path, media_type, tmdb_id, rename_media,
-        status, stage, progress, message, error_message, renamed_file_count, uploaded_files,
+        status, stage, progress, message, error_message, rename_plan, rename_operation_index,
+        renamed_directory_count, renamed_file_count, uploaded_files,
         created_at, started_at, completed_at, updated_at
     </sql>
 
@@ -33,10 +37,12 @@
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO manual_scraping_job
         (task_id, directory_path, final_directory_path, media_type, tmdb_id, rename_media,
-         status, stage, progress, message, renamed_file_count, uploaded_files)
+         status, stage, progress, message, rename_plan, rename_operation_index,
+         renamed_directory_count, renamed_file_count, uploaded_files)
         VALUES
         (#{taskId}, #{directoryPath}, #{finalDirectoryPath}, #{mediaType}, #{tmdbId}, #{renameMedia},
-         #{status}, #{stage}, #{progress}, #{message}, #{renamedFileCount}, #{uploadedFiles})
+         #{status}, #{stage}, #{progress}, #{message}, #{renamePlan}, #{renameOperationIndex},
+         #{renamedDirectoryCount}, #{renamedFileCount}, #{uploadedFiles})
     </insert>
 
     <select id="selectById" resultMap="JobResultMap">
@@ -79,6 +85,9 @@
             message = #{message},
             error_message = #{errorMessage},
             final_directory_path = #{finalDirectoryPath},
+            rename_plan = #{renamePlan},
+            rename_operation_index = #{renameOperationIndex},
+            renamed_directory_count = #{renamedDirectoryCount},
             renamed_file_count = #{renamedFileCount},
             uploaded_files = #{uploadedFiles},
             completed_at = #{completedAt},
