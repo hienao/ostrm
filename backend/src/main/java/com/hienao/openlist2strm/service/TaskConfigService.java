@@ -1,6 +1,7 @@
 package com.hienao.openlist2strm.service;
 
 import com.hienao.openlist2strm.config.PathConfiguration;
+import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
 import com.hienao.openlist2strm.mapper.TaskConfigMapper;
@@ -167,6 +168,10 @@ public class TaskConfigService {
     if (existingConfig == null) {
       throw new BusinessException("任务配置不存在，ID: " + taskConfig.getId());
     }
+    if (!StringUtils.hasText(taskConfig.getLibraryType())) {
+      taskConfig.setLibraryType(existingConfig.getLibraryType());
+    }
+    normalizeLibraryType(taskConfig);
 
     // 如果更新了任务名称，检查是否与其他配置冲突
     if (StringUtils.hasText(taskConfig.getTaskName())
@@ -361,6 +366,7 @@ public class TaskConfigService {
     if (!StringUtils.hasText(taskConfig.getPath())) {
       throw new BusinessException("任务路径不能为空");
     }
+    normalizeLibraryType(taskConfig);
 
     // 验证cron表达式格式（如果提供了的话）
     if (StringUtils.hasText(taskConfig.getCron())) {
@@ -377,6 +383,10 @@ public class TaskConfigService {
   private void setDefaultValues(TaskConfig taskConfig) {
     if (taskConfig.getNeedScrap() == null) {
       taskConfig.setNeedScrap(false);
+    }
+    normalizeLibraryType(taskConfig);
+    if (taskConfig.getSkipInvalidStructure() == null) {
+      taskConfig.setSkipInvalidStructure(false);
     }
     if (taskConfig.getRenameRegex() == null) {
       taskConfig.setRenameRegex("");
@@ -395,6 +405,18 @@ public class TaskConfigService {
     }
     if (taskConfig.getIsActive() == null) {
       taskConfig.setIsActive(true);
+    }
+  }
+
+  private void normalizeLibraryType(TaskConfig taskConfig) {
+    try {
+      MediaLibraryType libraryType = MediaLibraryType.from(taskConfig.getLibraryType());
+      taskConfig.setLibraryType(libraryType.value());
+      if (libraryType == MediaLibraryType.AUTO) {
+        taskConfig.setSkipInvalidStructure(false);
+      }
+    } catch (IllegalArgumentException e) {
+      throw new BusinessException(e.getMessage());
     }
   }
 }

@@ -70,17 +70,8 @@ public class UrlEncoder {
 
   /** 编码路径段 */
   private static String encodePathSegment(String path) {
-    String[] segments = path.split("/");
     StringBuilder result = new StringBuilder();
-
-    for (String segment : segments) {
-      if (!segment.isEmpty()) {
-        result
-            .append("/")
-            .append(URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20"));
-      }
-    }
-
+    appendEncoded(result, path, true);
     return result.toString();
   }
 
@@ -96,10 +87,10 @@ public class UrlEncoder {
         }
 
         String[] keyValue = param.split("=", 2);
-        String encodedKey = URLEncoder.encode(keyValue[0], StandardCharsets.UTF_8);
+        String encodedKey = encodeQueryValue(keyValue[0]);
 
         if (keyValue.length == 2) {
-          String encodedValue = URLEncoder.encode(keyValue[1], StandardCharsets.UTF_8);
+          String encodedValue = encodeQueryValue(keyValue[1]);
           result.append(encodedKey).append("=").append(encodedValue);
         } else {
           result.append(encodedKey);
@@ -108,5 +99,73 @@ public class UrlEncoder {
     }
 
     return result.toString();
+  }
+
+  private static String encodeQueryValue(String value) {
+    StringBuilder result = new StringBuilder();
+    appendEncoded(result, value, false);
+    return result.toString();
+  }
+
+  /** 按 RFC 3986 编码 URI 组件，并保留已经存在的百分号转义，保证重复调用不会把 %20 变成 %2520。 */
+  private static void appendEncoded(StringBuilder result, String value, boolean path) {
+    for (int index = 0; index < value.length(); ) {
+      char current = value.charAt(index);
+      if (current == '%'
+          && index + 2 < value.length()
+          && isHexDigit(value.charAt(index + 1))
+          && isHexDigit(value.charAt(index + 2))) {
+        result.append(value, index, index + 3);
+        index += 3;
+        continue;
+      }
+
+      int codePoint = value.codePointAt(index);
+      if (codePoint < 128 && isAllowedAscii((char) codePoint, path)) {
+        result.append((char) codePoint);
+      } else {
+        byte[] bytes = new String(Character.toChars(codePoint)).getBytes(StandardCharsets.UTF_8);
+        for (byte valueByte : bytes) {
+          int unsigned = valueByte & 0xFF;
+          result.append('%');
+          result.append(Character.toUpperCase(Character.forDigit(unsigned >>> 4, 16)));
+          result.append(Character.toUpperCase(Character.forDigit(unsigned & 0x0F, 16)));
+        }
+      }
+      index += Character.charCount(codePoint);
+    }
+  }
+
+  private static boolean isAllowedAscii(char value, boolean path) {
+    if (Character.isLetterOrDigit(value)
+        || value == '-'
+        || value == '.'
+        || value == '_'
+        || value == '~') {
+      return true;
+    }
+    if (!path) {
+      return false;
+    }
+    return value == '/'
+        || value == ':'
+        || value == '@'
+        || value == '!'
+        || value == '$'
+        || value == '&'
+        || value == '\''
+        || value == '('
+        || value == ')'
+        || value == '*'
+        || value == '+'
+        || value == ','
+        || value == ';'
+        || value == '=';
+  }
+
+  private static boolean isHexDigit(char value) {
+    return (value >= '0' && value <= '9')
+        || (value >= 'a' && value <= 'f')
+        || (value >= 'A' && value <= 'F');
   }
 }

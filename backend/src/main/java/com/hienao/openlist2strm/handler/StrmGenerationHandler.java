@@ -44,7 +44,11 @@ public class StrmGenerationHandler implements FileProcessorHandler {
       String strmPath = context.getTaskConfig().getStrmPath();
       String renameRegex = context.getTaskConfig().getRenameRegex();
       OpenlistConfig openlistConfig = context.getOpenlistConfig();
-      boolean isIncrement = Boolean.TRUE.equals(context.getTaskConfig().getIsIncrement());
+      boolean isIncrement =
+          Boolean.TRUE.equals(
+              context.getAttribute(
+                  "executionIncremental",
+                  Boolean.TRUE.equals(context.getTaskConfig().getIsIncrement())));
 
       // 构建文件 URL 并添加 sign 参数
       String fileUrlWithSign = buildFileUrlWithSign(currentFile.getUrl(), currentFile.getSign());

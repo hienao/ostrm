@@ -7,7 +7,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +32,8 @@ public class SystemConfigService {
   private final PathConfiguration pathConfiguration;
 
   private static final String CONFIG_FILE = "systemconf.json";
+  private final Object configLock = new Object();
+  private volatile Map<String, Object> cachedConfig;
 
   /** 获取配置目录路径 */
   private String getConfigDirectoryPath() {
@@ -46,82 +51,71 @@ public class SystemConfigService {
    * @return 系统配置Map
    */
   public Map<String, Object> getSystemConfig() {
-    try {
-      // 确保配置目录存在
-      createConfigDirectoryIfNotExists();
+    Map<String, Object> snapshot = cachedConfig;
+    if (snapshot != null) {
+      return snapshot;
+    }
 
-      File configFile = new File(getConfigFilePath());
-      Map<String, Object> result;
-      boolean needSave = false;
+    synchronized (configLock) {
+      if (cachedConfig != null) {
+        return cachedConfig;
+      }
+      try {
+        createConfigDirectoryIfNotExists();
 
-      if (!configFile.exists()) {
-        // 如果配置文件不存在，创建默认配置
-        log.info("系统配置文件不存在，创建默认配置: {}", getConfigFilePath());
-        result = getDefaultConfig();
-        needSave = true;
-      } else {
-        // 读取配置文件
-        String content = Files.readString(Paths.get(getConfigFilePath()));
-        if (content.trim().isEmpty()) {
+        File configFile = new File(getConfigFilePath());
+        Map<String, Object> result;
+        boolean needSave = false;
+
+        if (!configFile.exists()) {
+          log.info("系统配置文件不存在，创建默认配置: {}", getConfigFilePath());
           result = getDefaultConfig();
           needSave = true;
         } else {
-          @SuppressWarnings("unchecked")
-          Map<String, Object> config = objectMapper.readValue(content, Map.class);
-
-          // 获取默认配置
-          result = getDefaultConfig();
-
-          // 递归合并配置（修复嵌套 Map 合并问题）
-          deepMerge(result, config);
-
-          // 记录实际读取的配置值
-          logConfigValues(result);
-
-          // 检查是否缺少必要字段
-          if (!config.containsKey("mediaExtensions")) {
-            log.info("系统配置中缺少mediaExtensions字段，添加默认配置");
-            needSave = true;
-          }
-          if (!config.containsKey("tmdb")) {
-            log.info("系统配置中缺少tmdb字段，添加默认配置");
-            needSave = true;
-          }
-          if (!config.containsKey("scraping")) {
-            log.info("系统配置中缺少scraping字段，添加默认配置");
-            needSave = true;
-          }
-          if (!config.containsKey("scrapingRegex")) {
-            log.info("系统配置中缺少scrapingRegex字段，添加默认配置");
-            needSave = true;
-          }
-          if (!config.containsKey("log")) {
-            log.info("系统配置中缺少log字段，添加默认配置");
+          String content = Files.readString(Paths.get(getConfigFilePath()));
+          if (content.trim().isEmpty()) {
+            result = getDefaultConfig();
             needSave = true;
           } else {
-            // 检查log配置的子字段
             @SuppressWarnings("unchecked")
-            Map<String, Object> logConfig = (Map<String, Object>) config.get("log");
-            if (logConfig != null) {
+            Map<String, Object> config = objectMapper.readValue(content, Map.class);
+            result = getDefaultConfig();
+            deepMerge(result, config);
+            if (removeDeprecatedAiPrompt(result)) {
+              needSave = true;
+            }
+            logConfigValues(result);
+
+            for (String requiredKey :
+                List.of("mediaExtensions", "tmdb", "scraping", "scrapingRegex", "log")) {
+              if (!config.containsKey(requiredKey)) {
+                log.info("系统配置中缺少{}字段，添加默认配置", requiredKey);
+                needSave = true;
+              }
+            }
+            Object logValue = config.get("log");
+            if (logValue instanceof Map<?, ?> rawLogConfig) {
+              @SuppressWarnings("unchecked")
+              Map<String, Object> logConfig = (Map<String, Object>) rawLogConfig;
               if (!logConfig.containsKey("reportUsageData")) {
                 log.info("系统配置中缺少log.reportUsageData字段，添加默认配置");
-                logConfig.put("reportUsageData", true);
                 needSave = true;
               }
             }
           }
         }
-      }
 
-      // 如果需要保存配置文件
-      if (needSave) {
-        saveSystemConfigInternal(result);
-      }
+        if (needSave) {
+          saveSystemConfigInternal(result);
+        }
 
-      return result;
-    } catch (Exception e) {
-      log.error("读取系统配置失败", e);
-      return getDefaultConfig();
+        cachedConfig = immutableSnapshot(result);
+        return cachedConfig;
+      } catch (Exception e) {
+        log.error("读取系统配置失败", e);
+        cachedConfig = immutableSnapshot(getDefaultConfig());
+        return cachedConfig;
+      }
     }
   }
 
@@ -131,27 +125,53 @@ public class SystemConfigService {
    * @param config 配置Map
    */
   public void saveSystemConfig(Map<String, Object> config) {
-    try {
-      // 确保配置目录存在
-      createConfigDirectoryIfNotExists();
-
-      // 读取现有配置
-      Map<String, Object> existingConfig = getSystemConfig();
-
-      // 深度合并配置（递归合并嵌套的 Map）
-      deepMerge(existingConfig, config);
-
-      // 记录关键配置值
-      logConfigurationValues(existingConfig);
-
-      // 写入配置文件
-      saveSystemConfigInternal(existingConfig);
-
-      log.info("系统配置已保存到: {}", getConfigFilePath());
-    } catch (Exception e) {
-      log.error("保存系统配置失败", e);
-      throw new RuntimeException("保存系统配置失败", e);
+    synchronized (configLock) {
+      try {
+        createConfigDirectoryIfNotExists();
+        Map<String, Object> existingConfig = mutableCopy(getSystemConfig());
+        deepMerge(existingConfig, config);
+        removeDeprecatedAiPrompt(existingConfig);
+        logConfigurationValues(existingConfig);
+        saveSystemConfigInternal(existingConfig);
+        cachedConfig = immutableSnapshot(existingConfig);
+        log.info("系统配置已保存到: {}", getConfigFilePath());
+      } catch (Exception e) {
+        log.error("保存系统配置失败", e);
+        throw new RuntimeException("保存系统配置失败", e);
+      }
     }
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> mutableCopy(Map<String, Object> source) {
+    Map<String, Object> copy = new LinkedHashMap<>();
+    source.forEach(
+        (key, value) -> {
+          if (value instanceof Map<?, ?> mapValue) {
+            copy.put(key, mutableCopy((Map<String, Object>) mapValue));
+          } else if (value instanceof List<?> listValue) {
+            copy.put(key, new ArrayList<>(listValue));
+          } else {
+            copy.put(key, value);
+          }
+        });
+    return copy;
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> immutableSnapshot(Map<String, Object> source) {
+    Map<String, Object> copy = new LinkedHashMap<>();
+    source.forEach(
+        (key, value) -> {
+          if (value instanceof Map<?, ?> mapValue) {
+            copy.put(key, immutableSnapshot((Map<String, Object>) mapValue));
+          } else if (value instanceof List<?> listValue) {
+            copy.put(key, List.copyOf(listValue));
+          } else {
+            copy.put(key, value);
+          }
+        });
+    return Collections.unmodifiableMap(copy);
   }
 
   /**
@@ -277,7 +297,6 @@ public class SystemConfigService {
     aiConfig.put("apiKey", ""); // OpenAI API Key
     aiConfig.put("model", "gpt-3.5-turbo"); // 使用的模型
     aiConfig.put("qpmLimit", 60); // 每分钟请求限制
-    aiConfig.put("prompt", getDefaultAiPrompt()); // 默认提示词
     defaultConfig.put("ai", aiConfig);
 
     // 正则刮削配置 - 使用增强的正则表达式
@@ -375,74 +394,6 @@ public class SystemConfigService {
   }
 
   /**
-   * 获取默认AI提示词
-   *
-   * @return 默认提示词
-   */
-  public String getDefaultAiPrompt() {
-    return """
-你是一个专业的影视文件名标准化工具。你的任务是将给定的文件名解析为结构化的媒体信息，以便进行 TMDB 匹配。
-
-输入：文件名或目录路径（可能包含杂乱字符、非标准命名等）
-
-输出要求：必须返回有效的 JSON 格式，推荐使用新格式（分离字段），但也支持旧格式兼容。
-
-=== 新格式（推荐）===
-{
-  "success": true/false,
-  "title": "媒体标题（不含年份、季集信息）",
-  "year": "年份（字符串格式，如'2010'）",
-  "season": 季数（数字，仅电视剧），
-  "episode": 集数（数字，仅电视剧），
-  "type": "movie/tv/unknown",
-  "reason": "失败原因（仅在 success 为 false 时提供）"
-}
-
-=== 旧格式（兼容）===
-{
-  "success": true/false,
-  "filename": "标准化文件名",
-  "type": "movie/tv/unknown",
-  "reason": "失败原因（仅在 success 为 false 时提供）"
-}
-
-处理规则：
-1. 优先使用新格式，将标题、年份、季集信息分离
-2. 标题应该是纯净的媒体名称，不包含年份、季集、画质等信息
-3. 移除无关符号和标记（如 []、画质标记、编码信息等）
-4. 缺少年份但可推断时补充（如目录名含年份）
-5. 若无法提取关键信息，设置 success 为 false 并说明原因
-
-示例输入输出：
-
-输入：[电影] 盗梦空间.2010.1080p.BluRay.x264.mkv
-输出：{"success": true, "title": "盗梦空间", "year": "2010", "type": "movie"}
-
-输入：TV Shows/The Big Bang Theory/Season 3/03 - The Gothowitz Deviation.mp4
-输出：{"success": true, "title": "The Big Bang Theory", "year": "2007", "season": 3, "episode": 3, "type": "tv"}
-
-输入：Breaking Bad S05E14 Ozymandias 1080p.mkv
-输出：{"success": true, "title": "Breaking Bad", "year": "2008", "season": 5, "episode": 14, "type": "tv"}
-
-输入：Inception.2010.mkv
-输出：{"success": true, "title": "Inception", "year": "2010", "type": "movie"}
-
-输入：S01E05.mkv
-输出：{"success": false, "reason": "缺少剧名信息", "type": "tv"}
-
-输入：random_file.txt
-输出：{"success": false, "reason": "非视频文件", "type": "unknown"}
-
-重要：
-- 必须返回有效的 JSON 格式
-- 不要添加任何 JSON 之外的文字
-- 确保 JSON 格式正确，可以被解析
-- 优先使用新格式，标题字段不应包含年份和季集信息
-- 年份字段为字符串格式，季集字段为数字格式
-""";
-  }
-
-  /**
    * 验证TMDB API Key是否有效
    *
    * @param apiKey TMDB API Key
@@ -470,6 +421,15 @@ public class SystemConfigService {
       log.error("创建配置目录失败: {}", getConfigDirectoryPath(), e);
       throw new RuntimeException("创建配置目录失败", e);
     }
+  }
+
+  @SuppressWarnings("unchecked")
+  private boolean removeDeprecatedAiPrompt(Map<String, Object> config) {
+    Object aiObject = config.get("ai");
+    if (aiObject instanceof Map) {
+      return ((Map<String, Object>) aiObject).remove("prompt") != null;
+    }
+    return false;
   }
 
   /**

@@ -1,9 +1,7 @@
 package com.hienao.openlist2strm.handler;
 
 import com.hienao.openlist2strm.handler.context.FileProcessingContext;
-import com.hienao.openlist2strm.service.MediaScrapingService;
 import com.hienao.openlist2strm.service.OpenlistApiService;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Set;
@@ -36,7 +34,6 @@ public class NfoDownloadHandler implements FileProcessorHandler {
 
   private final FilePriorityResolver priorityResolver;
   private final OpenlistApiService openlistApiService;
-  private final MediaScrapingService mediaScrapingService;
 
   // ==================== 接口实现 ====================
 
@@ -56,6 +53,7 @@ public class NfoDownloadHandler implements FileProcessorHandler {
       switch (priority.getPriority()) {
         case LOCAL:
           log.debug("本地 NFO 文件已存在，跳过: {}", context.getBaseFileName());
+          context.setAttribute("metadataAvailable", true);
           context.getStats().incrementSkipped();
           return ProcessingResult.SKIPPED;
 
@@ -63,7 +61,7 @@ public class NfoDownloadHandler implements FileProcessorHandler {
           return downloadFromOpenList(context);
 
         case SCRAPING:
-          return fallbackToScraping(context);
+          return ProcessingResult.SKIPPED;
 
         case SKIPPED:
         default:
@@ -80,7 +78,7 @@ public class NfoDownloadHandler implements FileProcessorHandler {
 
   @Override
   public Set<FileType> getHandledTypes() {
-    return Set.of(FileType.NFO);
+    return Set.of(FileType.NFO, FileType.VIDEO);
   }
 
   // ==================== 下载逻辑 ====================
@@ -95,51 +93,22 @@ public class NfoDownloadHandler implements FileProcessorHandler {
           findNfoFileInDirectory(context.getDirectoryFiles(), nfoFileName);
 
       if (nfoFile != null) {
-        // 下载 NFO 文件内容
-        byte[] content =
-            openlistApiService.getFileContent(
-                context.getOpenlistConfig(), nfoFile.getOpenlistFile(), false);
-
-        if (content != null && content.length > 0) {
-          // 保存到本地
-          Path targetPath = Paths.get(context.getSaveDirectory(), nfoFileName);
-          Files.createDirectories(targetPath.getParent());
-          Files.write(targetPath, content);
-
+        Path targetPath = Paths.get(context.getSaveDirectory(), nfoFileName);
+        if (openlistApiService.downloadToFile(
+            context.getOpenlistConfig(), nfoFile.getOpenlistFile(), targetPath)) {
           log.info("从 OpenList 下载 NFO 文件成功: {}", nfoFileName);
+          context.setAttribute("metadataAvailable", true);
           context.getStats().incrementProcessed();
           return ProcessingResult.SUCCESS;
         }
       }
 
-      // OpenList 不存在，执行刮削
-      log.debug("OpenList 中不存在 NFO 文件，执行刮削");
-      return fallbackToScraping(context);
+      // OpenList 不存在，由后续统一的 MediaScrapingHandler 执行刮削
+      log.debug("OpenList 中不存在 NFO 文件，交由媒体刮削处理器");
+      return ProcessingResult.SKIPPED;
 
     } catch (Exception e) {
       log.error("从 OpenList 下载 NFO 文件失败: {}", context.getBaseFileName(), e);
-      return ProcessingResult.FAILED;
-    }
-  }
-
-  /** Fallback 到刮削 */
-  private ProcessingResult fallbackToScraping(FileProcessingContext context) {
-    try {
-      mediaScrapingService.scrapMedia(
-          context.getOpenlistConfig(),
-          context.getCurrentFile().getName(),
-          context.getTaskConfig().getStrmPath(),
-          context.getRelativePath(),
-          context.getDirectoryFiles(),
-          context.getCurrentFile().getPath());
-
-      log.debug("NFO 文件刮削完成: {}", context.getBaseFileName());
-      context.getStats().incrementProcessed();
-      return ProcessingResult.SUCCESS;
-
-    } catch (Exception e) {
-      log.error("NFO 文件刮削失败: {}", context.getBaseFileName(), e);
-      context.getStats().incrementFailed();
       return ProcessingResult.FAILED;
     }
   }
