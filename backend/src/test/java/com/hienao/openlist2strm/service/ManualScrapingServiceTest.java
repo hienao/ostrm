@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -36,7 +38,9 @@ class ManualScrapingServiceTest {
   private OpenlistConfigService openlistConfigService;
   private OpenlistApiService openlistApiService;
   private StrmFileService strmFileService;
+  private SystemConfigService systemConfigService;
   private TmdbApiService tmdbApiService;
+  private DataReportService dataReportService;
   private ManualScrapingService service;
 
   @TempDir Path tempDirectory;
@@ -47,18 +51,21 @@ class ManualScrapingServiceTest {
     openlistConfigService = mock(OpenlistConfigService.class);
     openlistApiService = mock(OpenlistApiService.class);
     strmFileService = mock(StrmFileService.class);
+    systemConfigService = mock(SystemConfigService.class);
     tmdbApiService = mock(TmdbApiService.class);
+    dataReportService = mock(DataReportService.class);
     service =
         new ManualScrapingService(
             taskConfigService,
             openlistConfigService,
             openlistApiService,
             strmFileService,
-            mock(SystemConfigService.class),
+            systemConfigService,
             mock(AiFileNameRecognitionService.class),
             tmdbApiService,
             mock(NfoGeneratorService.class),
             mock(CoverImageService.class),
+            dataReportService,
             new com.fasterxml.jackson.databind.ObjectMapper());
     ReflectionTestUtils.setField(service, "applicationDataPath", tempDirectory.toString());
   }
@@ -207,6 +214,55 @@ class ManualScrapingServiceTest {
   }
 
   @Test
+  void previewsContainedSeasonMarkerAndReportsAmbiguousDirectoryWhenEnabled() {
+    stubTvTaskWithEntries(
+        List.of(
+            entry("黑袍纠察队 第四季 1080p Remux", "/tv/Show/黑袍纠察队 第四季 1080p Remux", "folder"),
+            entry("S03 第四季", "/tv/Show/S03 第四季", "folder"),
+            entry("raw.S04E01.mkv", "/tv/Show/黑袍纠察队 第四季 1080p Remux/raw.S04E01.mkv", "file")));
+    when(systemConfigService.isDataReportEnabled()).thenReturn(true);
+    when(tmdbApiService.getTvDetail(1399)).thenReturn(tvDetail());
+
+    PreviewRequest request = new PreviewRequest();
+    request.setDirectoryPath("/tv/Show");
+    request.setTmdbId(1399);
+
+    Preview preview = service.preview(7L, request);
+
+    assertEquals(1, preview.getProposedDirectoryRenames().size());
+    assertEquals(
+        "黑袍纠察队 第四季 1080p Remux", preview.getProposedDirectoryRenames().get(0).getSourceName());
+    assertEquals("Season 04", preview.getProposedDirectoryRenames().get(0).getTargetName());
+    verify(dataReportService)
+        .reportEvent(
+            eq("manual_season_directory_match_failed"),
+            argThat(
+                properties ->
+                    "S03 第四季".equals(properties.get("directory_name"))
+                        && "ambiguous".equals(properties.get("failure_reason"))));
+  }
+
+  @Test
+  void doesNotReportAmbiguousSeasonDirectoryWhenUsageReportingIsDisabled() {
+    stubTvTaskWithEntries(
+        List.of(
+            entry("S03 第四季", "/tv/Show/S03 第四季", "folder"),
+            entry("raw.S03E01.mkv", "/tv/Show/S03 第四季/raw.S03E01.mkv", "file")));
+    when(systemConfigService.isDataReportEnabled()).thenReturn(false);
+    when(tmdbApiService.getTvDetail(1399)).thenReturn(tvDetail());
+
+    PreviewRequest request = new PreviewRequest();
+    request.setDirectoryPath("/tv/Show");
+    request.setTmdbId(1399);
+
+    Preview preview = service.preview(7L, request);
+
+    assertTrue(preview.getProposedDirectoryRenames().isEmpty());
+    verify(dataReportService, never())
+        .reportEvent(anyString(), org.mockito.ArgumentMatchers.anyMap());
+  }
+
+  @Test
   void renamesSeriesRootThenSeasonThenMediaFile() {
     stubTvDirectory();
     TmdbTvDetail detail = tvDetail();
@@ -328,6 +384,17 @@ class ManualScrapingServiceTest {
   }
 
   private void stubTvDirectory() {
+    stubTvTaskWithEntries(
+        List.of(
+            entry("S1", "/tv/Show/S1", "folder"),
+            entry("第2季", "/tv/Show/第2季", "folder"),
+            entry("Specials", "/tv/Show/Specials", "folder"),
+            entry("raw.S01E01.mkv", "/tv/Show/S1/raw.S01E01.mkv", "file"),
+            entry("raw.S02E01.mkv", "/tv/Show/第2季/raw.S02E01.mkv", "file"),
+            entry("raw.S00E01.mkv", "/tv/Show/Specials/raw.S00E01.mkv", "file")));
+  }
+
+  private void stubTvTaskWithEntries(List<OpenlistApiService.OpenlistFile> entries) {
     TaskConfig task =
         new TaskConfig()
             .setId(7L)
@@ -338,17 +405,9 @@ class ManualScrapingServiceTest {
     OpenlistConfig config = new OpenlistConfig().setId(3L);
     when(taskConfigService.getById(7L)).thenReturn(task);
     when(openlistConfigService.getById(3L)).thenReturn(config);
-    List<OpenlistApiService.OpenlistFile> entries =
-        List.of(
-            entry("S1", "/tv/Show/S1", "folder"),
-            entry("第2季", "/tv/Show/第2季", "folder"),
-            entry("Specials", "/tv/Show/Specials", "folder"),
-            entry("raw.S01E01.mkv", "/tv/Show/S1/raw.S01E01.mkv", "file"),
-            entry("raw.S02E01.mkv", "/tv/Show/第2季/raw.S02E01.mkv", "file"),
-            entry("raw.S00E01.mkv", "/tv/Show/Specials/raw.S00E01.mkv", "file"));
     when(openlistApiService.getAllFilesRecursively(config, "/tv/Show")).thenReturn(entries);
     when(openlistApiService.getDirectoryContents(config, "/tv/Show"))
-        .thenReturn(entries.subList(0, 3));
+        .thenReturn(entries.stream().filter(entry -> "folder".equals(entry.getType())).toList());
     when(strmFileService.isVideoFile(anyString()))
         .thenAnswer(invocation -> invocation.getArgument(0, String.class).endsWith(".mkv"));
   }
