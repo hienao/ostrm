@@ -25,6 +25,10 @@ features:
     details: 可选的智能媒体信息刮削功能，自动获取电影和电视剧元数据
   - title: 🧹 媒体库维护
     details: 按需检查异常目录，预览并重命名媒体目录、季目录和文件，失败后可继续执行
+  - title: 🔄 媒体服务器刷新
+    details: STRM 任务完成后通知 Emby 或 Jellyfin 刷新全部或指定媒体库
+  - title: 🔔 多渠道任务通知
+    details: 通过 Apprise 推送任务与手动刮削结果，并按类别展示失败路径和原因
   - title: 🖼️ 图片文件下载
     details: 自动下载海报、背景图和缩略图，支持本地、OpenList 和刮削三级优先级
   - title: 📄 字幕文件保留

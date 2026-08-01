@@ -19,7 +19,18 @@ class TaskExecutionServiceStructureFilterTest {
     strmFileService = mock(StrmFileService.class);
     service =
         new TaskExecutionService(
-            null, null, null, strmFileService, null, null, null, null, Runnable::run);
+            null,
+            null,
+            null,
+            strmFileService,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            Runnable::run);
   }
 
   @Test
@@ -40,6 +51,8 @@ class TaskExecutionServiceStructureFilterTest {
     assertEquals(2, result.skippedVideoPaths().size());
     assertTrue(result.skippedVideoPaths().contains(root.getPath()));
     assertTrue(result.skippedVideoPaths().contains(deep.getPath()));
+    assertTrue(result.skippedVideoReasons().get(root.getPath()).contains("任务根目录"));
+    assertTrue(result.skippedVideoReasons().get(deep.getPath()).contains("层级"));
   }
 
   @Test
@@ -74,6 +87,26 @@ class TaskExecutionServiceStructureFilterTest {
 
     assertEquals(List.of(root), result.eligibleVideoFiles());
     assertTrue(result.skippedVideoPaths().isEmpty());
+  }
+
+  @Test
+  void selectsOnlyValidFirstLevelMediaDirectoriesForAutomaticRename() {
+    TaskConfig task =
+        new TaskConfig().setPath("/media").setLibraryType("tv").setAutoRenameMedia(true);
+    OpenlistApiService.OpenlistFile first =
+        video("S01E01.mkv", "/media/Show B/Season 01/S01E01.mkv");
+    OpenlistApiService.OpenlistFile second =
+        video("S01E02.mkv", "/media/Show B/Season 01/S01E02.mkv");
+    OpenlistApiService.OpenlistFile another =
+        video("S01E01.mkv", "/media/Show A/Season 01/S01E01.mkv");
+    OpenlistApiService.OpenlistFile invalid = video("root.mkv", "/media/root.mkv");
+    org.mockito.Mockito.when(strmFileService.isVideoFile(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+
+    List<String> result =
+        service.autoRenameDirectories(task, List.of(first, second, another, invalid));
+
+    assertEquals(List.of("/media/Show A", "/media/Show B"), result);
   }
 
   private OpenlistApiService.OpenlistFile video(String name, String path) {

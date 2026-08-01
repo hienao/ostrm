@@ -22,6 +22,8 @@ import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
+import com.hienao.openlist2strm.exception.RenameOperationException;
+import com.hienao.openlist2strm.notification.NotificationIssue;
 import com.hienao.openlist2strm.util.SeasonDirectoryNameParser;
 import com.hienao.openlist2strm.util.TaskMediaParser;
 import com.hienao.openlist2strm.util.TmdbIdExtractor;
@@ -221,6 +223,125 @@ public class ManualScrapingService {
     PreviewRequest request = new PreviewRequest();
     request.setDirectoryPath(directoryPath);
     return preview(taskId, request);
+  }
+
+  /**
+   * 普通任务执行前复用手动刮削的命名规则，仅重命名 OpenList 媒体，不生成或上传元数据。
+   *
+   * <p>调用方必须在本方法返回后重新读取文件清单，避免继续使用重命名前的路径和 URL。
+   */
+  public AutoRenameResult autoRenameForTaskExecution(Long taskId, String directoryPath) {
+    Context context = loadContext(taskId);
+    String selectedPath = requireTaskPath(context.task(), directoryPath);
+    if (normalizePath(context.task().getPath()).equals(selectedPath)) {
+      throw new BusinessException("不能自动重命名任务根目录");
+    }
+    validateSelectableDirectory(context.libraryType(), selectedPath);
+
+    VideoScan videoScan = scanVideoFiles(context.openlistConfig(), selectedPath);
+    List<OpenlistApiService.OpenlistFile> videoFiles = videoScan.videoFiles();
+    if (videoFiles.isEmpty()) {
+      return new AutoRenameResult(false, selectedPath, 0, 0, "目录中没有媒体文件", null);
+    }
+    validateMediaDirectory(context.libraryType(), selectedPath, videoFiles);
+
+    Integer tmdbId = TmdbIdExtractor.extractTmdbIdFromPath(selectedPath);
+    if (tmdbId == null) {
+      tmdbId = TmdbIdExtractor.extractTmdbIdFromFileName(videoFiles.get(0).getName());
+    }
+
+    Match match;
+    if (tmdbId != null) {
+      match = loadMatch(context.libraryType() == MediaLibraryType.MOVIE ? "movie" : "tv", tmdbId);
+    } else {
+      MediaInfo mediaInfo;
+      try {
+        mediaInfo = recognize(context, videoFiles.get(0));
+      } catch (BusinessException e) {
+        String reason = e.getMessage();
+        return new AutoRenameResult(
+            false,
+            selectedPath,
+            0,
+            0,
+            reason,
+            scrapeIssue("TITLE_UNAVAILABLE", videoFiles.get(0).getPath(), reason));
+      }
+      if (mediaInfo.getConfidence() < 70) {
+        String reason = "媒体识别置信度过低（" + mediaInfo.getConfidence() + "%）";
+        return new AutoRenameResult(
+            false,
+            selectedPath,
+            0,
+            0,
+            reason,
+            scrapeIssue("LOW_CONFIDENCE", videoFiles.get(0).getPath(), reason));
+      }
+      match = findMatch(context.libraryType(), mediaInfo, selectedPath);
+    }
+    if (match == null) {
+      String reason = "TMDB 未找到匹配结果";
+      return new AutoRenameResult(
+          false,
+          selectedPath,
+          0,
+          0,
+          reason,
+          scrapeIssue("TMDB_NOT_MATCHED", videoFiles.get(0).getPath(), reason));
+    }
+
+    RenamePlan renamePlan =
+        buildRenamePlan(
+            context,
+            selectedPath,
+            videoFiles,
+            videoScan.entries(),
+            match.title(),
+            match.year(),
+            match.tmdbId());
+    RenameExecutionResult result;
+    try {
+      validateRenameCollisions(
+          context.openlistConfig(), selectedPath, renamePlan, videoScan.entries());
+      result =
+          executeRenamePlan(
+              context,
+              selectedPath,
+              selectedPath,
+              renamePlan,
+              videoScan.entries(),
+              0,
+              0,
+              0,
+              writeRenamePlan(renamePlan),
+              (stage,
+                  progress,
+                  message,
+                  finalPath,
+                  renamedDirectoryCount,
+                  renamedFileCount,
+                  serializedPlan,
+                  operationIndex) -> {});
+    } catch (RenameOperationException e) {
+      throw e.withMedia(match.title(), match.tmdbId());
+    }
+    previewCache.invalidate(new PreviewCacheKey(taskId, selectedPath, match.tmdbId()));
+    return new AutoRenameResult(
+        true,
+        result.finalDirectoryPath(),
+        result.renamedDirectoryCount(),
+        result.renamedFileCount(),
+        "自动重命名完成",
+        null);
+  }
+
+  private NotificationIssue scrapeIssue(String reasonCode, String sourcePath, String reason) {
+    return NotificationIssue.builder()
+        .category(NotificationIssue.Category.SCRAPE_UNRECOGNIZED)
+        .reasonCode(reasonCode)
+        .sourcePath(sourcePath)
+        .reason(reason)
+        .build();
   }
 
   public ExecuteResult execute(Long taskId, ExecuteRequest request) {
@@ -814,7 +935,7 @@ public class ManualScrapingService {
                         && renamePlan.directoryName().equals(entry.getName())
                         && !selectedPath.equals(entry.getPath()));
     if (directoryCollision) {
-      throw new BusinessException("目标文件夹已存在: " + renamePlan.directoryName());
+      throw renameFailure(true, "媒体目录", selectedPath, renamePlan.directoryName(), "目标文件夹已存在");
     }
 
     Set<String> paths = entryPaths(entries);
@@ -824,19 +945,18 @@ public class ManualScrapingService {
           seasonTargets.putIfAbsent(
               item.getTargetName().toLowerCase(Locale.ROOT), item.getSourceName());
       if (existingSource != null && !existingSource.equals(item.getSourceName())) {
-        throw new BusinessException(
-            "多个季目录会重命名为同一目标: "
-                + existingSource
-                + "、"
-                + item.getSourceName()
-                + " -> "
-                + item.getTargetName());
+        throw renameFailure(
+            true,
+            "季目录",
+            item.getSourcePath(),
+            item.getTargetName(),
+            "多个季目录会重命名为同一目标: " + existingSource + "、" + item.getSourceName());
       }
       String targetPath = join(parentPath(item.getSourcePath()), item.getTargetName());
       if (!item.getSourceName().equals(item.getTargetName())
           && paths.contains(normalizePath(item.getSourcePath()))
           && paths.contains(normalizePath(targetPath))) {
-        throw new BusinessException("目标季目录已存在: " + item.getTargetName());
+        throw renameFailure(true, "季目录", item.getSourcePath(), item.getTargetName(), "目标季目录已存在");
       }
     }
 
@@ -845,12 +965,13 @@ public class ManualScrapingService {
       String itemParent = parentPath(item.getSourcePath());
       String targetPath = normalizePath(join(itemParent, item.getTargetName()));
       if (!plannedFileTargets.add(targetPath.toLowerCase(Locale.ROOT))) {
-        throw new BusinessException("多个媒体文件会重命名为同一目标: " + item.getTargetName());
+        throw renameFailure(
+            false, "媒体文件", item.getSourcePath(), item.getTargetName(), "多个媒体文件会重命名为同一目标");
       }
       if (!item.getSourceName().equals(item.getTargetName())
           && paths.contains(normalizePath(item.getSourcePath()))
           && paths.contains(targetPath)) {
-        throw new BusinessException("目标媒体文件已存在: " + item.getTargetName());
+        throw renameFailure(false, "媒体文件", item.getSourcePath(), item.getTargetName(), "目标媒体文件已存在");
       }
     }
   }
@@ -877,12 +998,25 @@ public class ManualScrapingService {
     for (int index = operationIndex; index < operations.size(); index++) {
       RenameOperation operation = operations.get(index);
       String sourcePath = operationSourcePath(operation, originalPath, finalRoot, renamePlan);
-      renamePathIdempotently(
-          context.openlistConfig(),
-          sourcePath,
-          operation.item().getTargetName(),
-          operation.directory(),
-          currentPaths);
+      try {
+        renamePathIdempotently(
+            context.openlistConfig(),
+            sourcePath,
+            operation.item().getTargetName(),
+            operation.directory(),
+            currentPaths);
+      } catch (RenameOperationException e) {
+        throw e;
+      } catch (Exception e) {
+        throw renameFailure(
+            operation.directory(),
+            operation.directory()
+                ? (normalizePath(sourcePath).equals(normalizePath(originalPath)) ? "媒体目录" : "季目录")
+                : "媒体文件",
+            sourcePath,
+            operation.item().getTargetName(),
+            e.getMessage());
+      }
       if (operation.directory()) {
         directoryCount++;
       } else {
@@ -976,7 +1110,12 @@ public class ManualScrapingService {
       return;
     }
     if (sourceExists && targetExists && !normalizedSource.equals(targetPath)) {
-      throw new BusinessException("重命名目标已存在: " + targetPath);
+      throw renameFailure(
+          directory,
+          directory ? "目录" : "媒体文件",
+          normalizedSource,
+          targetName,
+          "重命名目标已存在: " + targetPath);
     }
     if (!sourceExists && temporaryExists) {
       openlistApiService.renameEntry(config, temporaryPath, targetName);
@@ -984,7 +1123,12 @@ public class ManualScrapingService {
       return;
     }
     if (!sourceExists) {
-      throw new BusinessException("重命名源和目标均不存在，目录可能已被外部修改: " + sourcePath);
+      throw renameFailure(
+          directory,
+          directory ? "目录" : "媒体文件",
+          normalizedSource,
+          targetName,
+          "重命名源和目标均不存在，可能已被外部修改");
     }
 
     if (lastSegment(normalizedSource).equalsIgnoreCase(targetName)
@@ -1009,6 +1153,21 @@ public class ManualScrapingService {
       }
     }
     paths.addAll(replacements);
+  }
+
+  private RenameOperationException renameFailure(
+      boolean directory, String scope, String sourcePath, String targetName, String reason) {
+    return new RenameOperationException(
+        NotificationIssue.builder()
+            .category(
+                directory
+                    ? NotificationIssue.Category.DIRECTORY_RENAME_FAILED
+                    : NotificationIssue.Category.FILE_RENAME_FAILED)
+            .scope(scope)
+            .sourcePath(sourcePath)
+            .targetName(targetName)
+            .reason(reason == null || reason.isBlank() ? "OpenList 重命名失败" : reason)
+            .build());
   }
 
   private Set<String> entryPaths(List<OpenlistApiService.OpenlistFile> entries) {
@@ -1391,6 +1550,14 @@ public class ManualScrapingService {
       Map<String, String> rootDirectoryFingerprint) {}
 
   private record GeneratedFile(Path localPath, String remoteName, String contentType) {}
+
+  public record AutoRenameResult(
+      boolean matched,
+      String finalDirectoryPath,
+      int renamedDirectoryCount,
+      int renamedFileCount,
+      String message,
+      NotificationIssue issue) {}
 
   @FunctionalInterface
   public interface JobProgressListener {

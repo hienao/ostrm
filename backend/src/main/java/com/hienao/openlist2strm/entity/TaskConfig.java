@@ -40,6 +40,21 @@ public class TaskConfig {
   /** 重命名正则表达式，为空时表示不需要重命名 */
   private String renameRegex;
 
+  /** 普通任务执行时是否根据刮削结果自动重命名 OpenList 媒体 */
+  private Boolean autoRenameMedia;
+
+  /** 任务完成后需要通知刷新的媒体服务器配置ID */
+  private Long mediaServerConfigId;
+
+  /** 媒体库刷新范围：NONE/ALL/LIBRARY */
+  private String mediaRefreshScope;
+
+  /** 精确刷新时选择的媒体库ID */
+  private String mediaLibraryId;
+
+  /** 精确刷新时保存的媒体库名称快照 */
+  private String mediaLibraryName;
+
   /** 定时任务表达式 */
   private String cron;
 

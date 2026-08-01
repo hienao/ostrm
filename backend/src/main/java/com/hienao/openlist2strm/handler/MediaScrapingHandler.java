@@ -8,6 +8,7 @@ import com.hienao.openlist2strm.dto.tmdb.TmdbTvDetail;
 import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.handler.context.FileProcessingContext;
 import com.hienao.openlist2strm.handler.context.TaskScrapingSession;
+import com.hienao.openlist2strm.notification.ScrapeOutcome;
 import com.hienao.openlist2strm.service.AiFileNameRecognitionService;
 import com.hienao.openlist2strm.service.CoverImageService;
 import com.hienao.openlist2strm.service.NfoGeneratorService;
@@ -72,9 +73,17 @@ public class MediaScrapingHandler implements FileProcessorHandler {
         return ProcessingResult.SKIPPED;
       }
 
-      // 执行刮削
-      scrapMedia(context);
-
+      // 执行刮削并保存结构化结果，供任务通知汇总。
+      ScrapeOutcome outcome = scrapMedia(context);
+      context.setAttribute("scrapeOutcome", outcome);
+      if (outcome.status() == ScrapeOutcome.Status.FAILED) {
+        context.getStats().incrementFailed();
+        return ProcessingResult.FAILED;
+      }
+      if (outcome.isUnrecognized()) {
+        context.getStats().incrementSkipped();
+        return ProcessingResult.SKIPPED;
+      }
       context.getStats().incrementProcessed();
       return ProcessingResult.SUCCESS;
 
@@ -94,7 +103,7 @@ public class MediaScrapingHandler implements FileProcessorHandler {
 
   /** 执行媒体刮削 */
   @SuppressWarnings("unchecked")
-  private void scrapMedia(FileProcessingContext context) {
+  private ScrapeOutcome scrapMedia(FileProcessingContext context) {
     String fileName = context.getCurrentFile().getName();
     String relativePath = context.getRelativePath();
     String saveDirectory = context.getSaveDirectory();
@@ -128,8 +137,7 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     // 如果路径中有 TMDB ID，直接使用
     if (tmdbId != null) {
       log.info("检测到路径中的 TMDB ID: {}, 直接从 TMDB 获取信息", tmdbId);
-      scrapeWithTmdbId(context, fileName, saveDirectory, tmdbId, mediaInfo, session);
-      return;
+      return scrapeWithTmdbId(context, fileName, saveDirectory, tmdbId, mediaInfo, session);
     }
 
     // 如果正则解析置信度低，尝试使用 AI
@@ -163,23 +171,29 @@ public class MediaScrapingHandler implements FileProcessorHandler {
     if (mediaInfo.getConfidence() < 70) {
       log.warn(
           "最终解析置信度过低 ({}%)，跳过刮削: {}", mediaInfo.getConfidence(), mediaInfo.getOriginalFileName());
-      return;
+      return ScrapeOutcome.unmatched(
+          ScrapeOutcome.Status.LOW_CONFIDENCE, "媒体识别置信度过低（" + mediaInfo.getConfidence() + "%）");
+    }
+
+    if (mediaInfo.getSearchQuery() == null || mediaInfo.getSearchQuery().isBlank()) {
+      return ScrapeOutcome.unmatched(ScrapeOutcome.Status.TITLE_UNAVAILABLE, "无法从文件名和目录中提取媒体标题");
     }
 
     // 根据媒体类型执行刮削
     String baseFileName = getStrmCompatibleBaseFileName(fileName);
 
     if (mediaInfo.isMovie()) {
-      scrapMovie(mediaInfo, saveDirectory, baseFileName, session);
+      return scrapMovie(mediaInfo, saveDirectory, baseFileName, session);
     } else if (mediaInfo.isTvShow()) {
-      scrapTvShow(mediaInfo, saveDirectory, baseFileName, session);
+      return scrapTvShow(mediaInfo, saveDirectory, baseFileName, session);
     } else {
       log.warn("未知媒体类型，跳过刮削: {}", fileName);
+      return ScrapeOutcome.unmatched(ScrapeOutcome.Status.UNSUPPORTED_MEDIA_TYPE, "无法确定媒体类型");
     }
   }
 
   /** 使用 TMDB ID 直接刮削 */
-  private void scrapeWithTmdbId(
+  private ScrapeOutcome scrapeWithTmdbId(
       FileProcessingContext context,
       String fileName,
       String saveDirectory,
@@ -198,32 +212,36 @@ public class MediaScrapingHandler implements FileProcessorHandler {
         if (movieDetail != null) {
           String baseFileName = getStrmCompatibleBaseFileName(fileName);
           scrapMovieWithDetail(mediaInfo, saveDirectory, baseFileName, movieDetail, session);
+          return ScrapeOutcome.matched(movieDetail.getTitle(), movieDetail.getId());
         }
       } else {
         TmdbTvDetail tvDetail = getTvDetail(session, tmdbId);
         if (tvDetail != null) {
           String baseFileName = getStrmCompatibleBaseFileName(fileName);
           scrapTvShowWithDetail(mediaInfo, saveDirectory, baseFileName, tvDetail, session);
+          return ScrapeOutcome.matched(tvDetail.getName(), tvDetail.getId());
         }
       }
+      return ScrapeOutcome.unmatched(ScrapeOutcome.Status.TMDB_NOT_MATCHED, "TMDB 条目不存在");
     } catch (Exception e) {
       log.error("使用 TMDB ID 刮削失败: {}", tmdbId, e);
+      return new ScrapeOutcome(ScrapeOutcome.Status.FAILED, e.getMessage(), null, tmdbId);
     }
   }
 
   /** 刮削电影 */
-  private void scrapMovie(
+  private ScrapeOutcome scrapMovie(
       MediaInfo mediaInfo, String saveDirectory, String baseFileName, TaskScrapingSession session) {
     try {
       String cacheKey = matchCacheKey("movie", mediaInfo);
       TmdbMovieDetail cachedDetail = session.movieMatches().get(cacheKey);
       if (cachedDetail != null) {
         scrapMovieWithDetail(mediaInfo, saveDirectory, baseFileName, cachedDetail, session);
-        return;
+        return ScrapeOutcome.matched(cachedDetail.getTitle(), cachedDetail.getId());
       }
       if (session.negativeMatches().contains(cacheKey)) {
         log.debug("命中电影搜索负缓存，跳过重复请求: {}", mediaInfo.getSearchQuery());
-        return;
+        return ScrapeOutcome.unmatched(ScrapeOutcome.Status.TMDB_NOT_MATCHED, "TMDB 未找到匹配电影");
       }
 
       TmdbSearchResponse searchResult =
@@ -232,14 +250,14 @@ public class MediaScrapingHandler implements FileProcessorHandler {
       if (searchResult.getResults() == null || searchResult.getResults().isEmpty()) {
         session.negativeMatches().add(cacheKey);
         log.warn("刮削失败 - 未找到匹配的电影: {} (年份: {})", mediaInfo.getSearchQuery(), mediaInfo.getYear());
-        return;
+        return ScrapeOutcome.unmatched(ScrapeOutcome.Status.TMDB_NOT_MATCHED, "TMDB 未找到匹配电影");
       }
 
       TmdbSearchResponse.TmdbSearchResult bestMatch =
           selectBestMatch(searchResult.getResults(), mediaInfo);
       if (bestMatch == null) {
         log.warn("刮削失败 - 未找到合适的电影匹配");
-        return;
+        return ScrapeOutcome.unmatched(ScrapeOutcome.Status.TMDB_NOT_MATCHED, "TMDB 未找到合适的电影匹配");
       }
 
       TmdbMovieDetail movieDetail = getMovieDetail(session, bestMatch.getId());
@@ -247,9 +265,11 @@ public class MediaScrapingHandler implements FileProcessorHandler {
       log.info("找到匹配电影: {} ({})", movieDetail.getTitle(), movieDetail.getId());
 
       scrapMovieWithDetail(mediaInfo, saveDirectory, baseFileName, movieDetail, session);
+      return ScrapeOutcome.matched(movieDetail.getTitle(), movieDetail.getId());
 
     } catch (Exception e) {
       log.error("刮削电影失败: {}", mediaInfo.getSearchQuery(), e);
+      return new ScrapeOutcome(ScrapeOutcome.Status.FAILED, e.getMessage(), null, null);
     }
   }
 
@@ -272,18 +292,18 @@ public class MediaScrapingHandler implements FileProcessorHandler {
   }
 
   /** 刮削电视剧 */
-  private void scrapTvShow(
+  private ScrapeOutcome scrapTvShow(
       MediaInfo mediaInfo, String saveDirectory, String baseFileName, TaskScrapingSession session) {
     try {
       String cacheKey = matchCacheKey("tv", mediaInfo);
       TmdbTvDetail cachedDetail = session.tvMatches().get(cacheKey);
       if (cachedDetail != null) {
         scrapTvShowWithDetail(mediaInfo, saveDirectory, baseFileName, cachedDetail, session);
-        return;
+        return ScrapeOutcome.matched(cachedDetail.getName(), cachedDetail.getId());
       }
       if (session.negativeMatches().contains(cacheKey)) {
         log.debug("命中电视剧搜索负缓存，跳过重复请求: {}", mediaInfo.getSearchQuery());
-        return;
+        return ScrapeOutcome.unmatched(ScrapeOutcome.Status.TMDB_NOT_MATCHED, "TMDB 未找到匹配电视剧");
       }
 
       TmdbSearchResponse searchResult =
@@ -292,14 +312,14 @@ public class MediaScrapingHandler implements FileProcessorHandler {
       if (searchResult.getResults() == null || searchResult.getResults().isEmpty()) {
         session.negativeMatches().add(cacheKey);
         log.warn("刮削失败 - 未找到匹配的电视剧: {} (年份: {})", mediaInfo.getSearchQuery(), mediaInfo.getYear());
-        return;
+        return ScrapeOutcome.unmatched(ScrapeOutcome.Status.TMDB_NOT_MATCHED, "TMDB 未找到匹配电视剧");
       }
 
       TmdbSearchResponse.TmdbSearchResult bestMatch =
           selectBestMatch(searchResult.getResults(), mediaInfo);
       if (bestMatch == null) {
         log.warn("刮削失败 - 未找到合适的电视剧匹配");
-        return;
+        return ScrapeOutcome.unmatched(ScrapeOutcome.Status.TMDB_NOT_MATCHED, "TMDB 未找到合适的电视剧匹配");
       }
 
       TmdbTvDetail tvDetail = getTvDetail(session, bestMatch.getId());
@@ -307,9 +327,11 @@ public class MediaScrapingHandler implements FileProcessorHandler {
       log.info("找到匹配电视剧: {} ({})", tvDetail.getName(), tvDetail.getId());
 
       scrapTvShowWithDetail(mediaInfo, saveDirectory, baseFileName, tvDetail, session);
+      return ScrapeOutcome.matched(tvDetail.getName(), tvDetail.getId());
 
     } catch (Exception e) {
       log.error("刮削电视剧失败: {}", mediaInfo.getSearchQuery(), e);
+      return new ScrapeOutcome(ScrapeOutcome.Status.FAILED, e.getMessage(), null, null);
     }
   }
 
