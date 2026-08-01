@@ -216,8 +216,11 @@
     <Teleport to="body">
       <div v-if="showAddModal" class="modal-overlay animate-fade-in">
         <div class="flex items-center justify-center min-h-screen p-4">
-          <div class="modal-content animate-scale-in w-full max-w-lg" @click.stop>
-            <div class="flex items-center justify-between mb-6">
+          <div
+            class="modal-content animate-scale-in mx-0 flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden p-0"
+            @click.stop
+          >
+            <div class="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-4 sm:px-6">
               <h3 class="text-xl font-semibold text-white">添加 OpenList 配置</h3>
               <button @click="closeAddModal" class="btn-icon">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -226,7 +229,8 @@
               </button>
             </div>
 
-            <form @submit.prevent="addConfig" class="space-y-5">
+            <form @submit.prevent="addConfig" class="flex min-h-0 flex-1 flex-col">
+              <div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6">
               <div>
                 <label for="baseUrl" class="block text-sm font-medium text-white/70 mb-2">Base URL</label>
                 <input id="baseUrl" v-model="configForm.baseUrl" type="url" required class="input-field" placeholder="https://openlist.example.com" :disabled="formLoading" />
@@ -271,8 +275,9 @@
                   <p class="text-sm font-medium">{{ formError }}</p>
                 </div>
               </div>
+              </div>
 
-              <div class="flex justify-end gap-3 pt-4">
+              <div class="flex shrink-0 justify-end gap-3 border-t border-white/10 bg-[#0A0A0F] px-4 py-4 sm:px-6">
                 <button type="button" @click="closeAddModal" class="btn-secondary" :disabled="formLoading">取消</button>
                 <button type="submit" class="btn-primary" :disabled="formLoading">
                   <svg v-if="formLoading" class="loading-spinner -ml-1 mr-2 w-4 h-4" fill="none" viewBox="0 0 24 24">
@@ -292,8 +297,11 @@
     <Teleport to="body">
       <div v-if="showEditModal" class="modal-overlay animate-fade-in">
         <div class="flex items-center justify-center min-h-screen p-4">
-          <div class="modal-content animate-scale-in w-full max-w-lg" @click.stop>
-            <div class="flex items-center justify-between mb-6">
+          <div
+            class="modal-content animate-scale-in mx-0 flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden p-0"
+            @click.stop
+          >
+            <div class="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-4 sm:px-6">
               <h3 class="text-xl font-semibold text-white">编辑 OpenList 配置</h3>
               <button @click="closeEditModal" class="btn-icon">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -302,7 +310,8 @@
               </button>
             </div>
 
-            <form @submit.prevent="updateConfig" class="space-y-5">
+            <form @submit.prevent="updateConfig" class="flex min-h-0 flex-1 flex-col">
+              <div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6">
               <div>
                 <label for="editBaseUrl" class="block text-sm font-medium text-white/70 mb-2">Base URL</label>
                 <input id="editBaseUrl" v-model="configForm.baseUrl" type="url" required class="input-field" placeholder="https://openlist.example.com" :disabled="formLoading" />
@@ -347,8 +356,9 @@
                   <p class="text-sm font-medium">{{ formError }}</p>
                 </div>
               </div>
+              </div>
 
-              <div class="flex justify-end gap-3 pt-4">
+              <div class="flex shrink-0 justify-end gap-3 border-t border-white/10 bg-[#0A0A0F] px-4 py-4 sm:px-6">
                 <button type="button" @click="closeEditModal" class="btn-secondary" :disabled="formLoading">取消</button>
                 <button type="submit" class="btn-primary" :disabled="formLoading">
                   <svg v-if="formLoading" class="loading-spinner -ml-1 mr-2 w-4 h-4" fill="none" viewBox="0 0 24 24">

@@ -51,6 +51,8 @@ class TaskExecutionServiceStructureFilterTest {
     assertEquals(2, result.skippedVideoPaths().size());
     assertTrue(result.skippedVideoPaths().contains(root.getPath()));
     assertTrue(result.skippedVideoPaths().contains(deep.getPath()));
+    assertTrue(result.skippedVideoReasons().get(root.getPath()).contains("任务根目录"));
+    assertTrue(result.skippedVideoReasons().get(deep.getPath()).contains("层级"));
   }
 
   @Test

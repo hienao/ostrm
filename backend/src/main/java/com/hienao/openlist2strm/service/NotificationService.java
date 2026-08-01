@@ -70,7 +70,7 @@ public class NotificationService {
       throw new BusinessException("Apprise 服务地址不能为空");
     }
     if (configKey == null || !configKey.matches("[A-Za-z0-9_-]{1,128}")) {
-      throw new BusinessException("Apprise 配置 Key 只能包含字母、数字、下划线和短横线");
+      throw new BusinessException("Apprise Config ID 只能包含字母、数字、下划线和短横线");
     }
 
     String endpoint = serverUrl.replaceAll("/+$", "") + "/notify/" + configKey + "/";

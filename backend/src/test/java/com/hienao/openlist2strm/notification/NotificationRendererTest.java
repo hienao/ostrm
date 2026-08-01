@@ -130,6 +130,45 @@ class NotificationRendererTest {
     assertTrue(result.body().contains("媒体库刷新失败（1）"));
   }
 
+  @Test
+  void includesStructureSkippedPathsReasonsAndDetailLimit() {
+    NotificationEvent event =
+        NotificationEvent.builder()
+            .kind(NotificationEvent.Kind.TASK)
+            .status(NotificationEvent.Status.SUCCESS)
+            .trigger(NotificationEvent.Trigger.MANUAL)
+            .taskId(6L)
+            .taskName("电影")
+            .executionMode("增量")
+            .libraryType("movie")
+            .structureSkipped(2)
+            .issues(
+                List.of(
+                    issue(
+                        NotificationIssue.Category.STRUCTURE_INVALID_SKIPPED,
+                        null,
+                        "/电影/根目录电影.mkv",
+                        null,
+                        "电影文件必须位于第一层媒体目录中"),
+                    issue(
+                        NotificationIssue.Category.STRUCTURE_INVALID_SKIPPED,
+                        null,
+                        "/电影/电影名/额外目录/层级过深.mkv",
+                        null,
+                        "电影目录层级过深")))
+            .completedAt(LocalDateTime.now())
+            .build();
+
+    RenderedNotification result = renderer.render(event, true, 1);
+
+    assertTrue(result.body().contains("结构异常跳过：2"));
+    assertTrue(result.body().contains("结构异常跳过（2）"));
+    assertTrue(result.body().contains("/电影/根目录电影.mkv"));
+    assertTrue(result.body().contains("原因：电影文件必须位于第一层媒体目录中"));
+    assertTrue(result.body().contains("另有 1 条，请查看任务日志"));
+    assertFalse(result.body().contains("/电影/电影名/额外目录/层级过深.mkv"));
+  }
+
   private NotificationIssue issue(
       NotificationIssue.Category category,
       String reasonCode,

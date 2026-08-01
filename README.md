@@ -16,6 +16,8 @@
   ·
   <a href="https://ostrm.51cloud.de/update-log.html">更新日志</a>
   ·
+  <a href="https://t.me/ostrm6">加入 Telegram 群组</a>
+  ·
   <a href="https://github.com/hienao/ostrm/issues">问题反馈</a>
 </p>
 
@@ -127,6 +129,7 @@ Spring Boot + MyBatis + Quartz
 - [完整文档](https://ostrm.51cloud.de/)
 - [常见问题](https://ostrm.51cloud.de/faq.html)
 - [版本更新记录](https://ostrm.51cloud.de/update-log.html)
+- [加入 Telegram 群组（@ostrm6）](https://t.me/ostrm6)
 - [提交 Issue](https://github.com/hienao/ostrm/issues)
 - [参与贡献](https://ostrm.51cloud.de/dev.html)
 

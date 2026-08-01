@@ -276,6 +276,7 @@ public class NotificationRenderer {
   private String categoryLabel(NotificationIssue.Category category) {
     return switch (category) {
       case SCRAPE_UNRECOGNIZED -> "刮削未识别";
+      case STRUCTURE_INVALID_SKIPPED -> "结构异常跳过";
       case DIRECTORY_RENAME_FAILED -> "目录重命名失败";
       case FILE_RENAME_FAILED -> "文件重命名失败";
       case PROCESSING_FAILED -> "处理失败";
