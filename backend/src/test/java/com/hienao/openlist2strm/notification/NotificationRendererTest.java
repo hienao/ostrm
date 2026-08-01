@@ -94,6 +94,42 @@ class NotificationRendererTest {
     assertTrue(result.body().contains("old.mkv → new.mkv"));
   }
 
+  @Test
+  void includesPreciseMediaLibraryRefreshFailure() {
+    NotificationEvent event =
+        NotificationEvent.builder()
+            .kind(NotificationEvent.Kind.TASK)
+            .status(NotificationEvent.Status.PARTIAL_SUCCESS)
+            .trigger(NotificationEvent.Trigger.MANUAL)
+            .taskId(8L)
+            .taskName("电影同步")
+            .executionMode("全量")
+            .libraryType("movie")
+            .mediaServerName("家庭 Jellyfin")
+            .mediaServerType("JELLYFIN")
+            .mediaRefreshScope("LIBRARY")
+            .mediaLibraryName("电影")
+            .mediaRefreshStatus("FAILED")
+            .mediaRefreshMessage("已配置的媒体库不存在，未回退为全部刷新")
+            .issues(
+                List.of(
+                    issue(
+                        NotificationIssue.Category.MEDIA_SERVER_REFRESH_FAILED,
+                        "MEDIA_LIBRARY_NOT_FOUND",
+                        "电影",
+                        null,
+                        "已配置的媒体库不存在，未回退为全部刷新")))
+            .completedAt(LocalDateTime.now())
+            .build();
+
+    RenderedNotification result = renderer.render(event, true, 5);
+
+    assertTrue(result.body().contains("媒体服务器：家庭 Jellyfin（JELLYFIN）"));
+    assertTrue(result.body().contains("刷新范围：指定媒体库（精确刷新）"));
+    assertTrue(result.body().contains("目标媒体库：电影"));
+    assertTrue(result.body().contains("媒体库刷新失败（1）"));
+  }
+
   private NotificationIssue issue(
       NotificationIssue.Category category,
       String reasonCode,

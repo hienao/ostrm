@@ -49,6 +49,19 @@ public class TaskConfigDto {
   /** 普通任务执行时是否根据刮削结果自动重命名 OpenList 媒体 */
   private Boolean autoRenameMedia;
 
+  /** 任务完成后需要通知刷新的媒体服务器配置ID */
+  private Long mediaServerConfigId;
+
+  /** 媒体库刷新范围：NONE/ALL/LIBRARY */
+  @Pattern(regexp = "(?i)^(NONE|ALL|LIBRARY)$", message = "媒体库刷新范围必须是 NONE、ALL 或 LIBRARY")
+  private String mediaRefreshScope;
+
+  /** 精确刷新时选择的媒体库ID */
+  @Size(max = 200, message = "媒体库ID长度不能超过200个字符") private String mediaLibraryId;
+
+  /** 精确刷新时保存的媒体库名称快照 */
+  @Size(max = 500, message = "媒体库名称长度不能超过500个字符") private String mediaLibraryName;
+
   /** 定时任务表达式 */
   @Size(max = 100, message = "定时任务表达式长度不能超过100个字符") @ValidCronExpression(message = "定时任务表达式格式不正确")
   private String cron;

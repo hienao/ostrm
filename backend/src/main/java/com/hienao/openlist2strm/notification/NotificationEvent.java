@@ -52,6 +52,12 @@ public class NotificationEvent {
   private int cleanedStrm;
   private int renamedDirectories;
   private int renamedFiles;
+  private String mediaServerName;
+  private String mediaServerType;
+  private String mediaRefreshScope;
+  private String mediaLibraryName;
+  private String mediaRefreshStatus;
+  private String mediaRefreshMessage;
   @Builder.Default private List<String> uploadedFiles = new ArrayList<>();
   @Builder.Default private List<NotificationIssue> issues = new ArrayList<>();
   private long durationMillis;

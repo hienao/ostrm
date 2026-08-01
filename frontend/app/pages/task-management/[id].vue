@@ -152,6 +152,10 @@
                 <dt class="text-sm text-white/40">上次执行</dt>
                 <dd class="mt-1 text-sm text-white/80">{{ formatDate(task.lastExecTime) }}</dd>
               </div>
+              <div>
+                <dt class="text-sm text-white/40">媒体库刷新</dt>
+                <dd class="mt-1 text-sm text-white/80">{{ taskRefreshLabel(task) }}</dd>
+              </div>
             </div>
 
             <div class="mt-3 flex items-center space-x-4 flex-wrap gap-y-2">
@@ -284,6 +288,63 @@
                       <li>添加前缀：<code class="bg-white/10 px-1 rounded">^|Movie_</code></li>
                     </ul>
                   </div>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+                <div>
+                  <label class="block text-sm text-white/70 mb-2">任务完成后刷新媒体库</label>
+                  <select v-model="taskForm.mediaRefreshScope" class="input-field" @change="onRefreshScopeChange">
+                    <option value="NONE">不刷新（默认）</option>
+                    <option value="ALL">刷新全部媒体库</option>
+                    <option value="LIBRARY">刷新指定媒体库</option>
+                  </select>
+                  <p class="mt-1 text-xs text-white/30">全量任务始终提交刷新；增量任务仅在媒体有变化时提交</p>
+                </div>
+
+                <div v-if="taskForm.mediaRefreshScope !== 'NONE'">
+                  <label class="block text-sm text-white/70 mb-2">媒体服务器 *</label>
+                  <select v-model="taskForm.mediaServerConfigId" required class="input-field" @change="onMediaServerChange">
+                    <option :value="null" disabled>请选择 Emby 或 Jellyfin</option>
+                    <option v-for="server in mediaServers" :key="server.id" :value="server.id">
+                      {{ server.name }}（{{ server.serverType }}{{ server.active ? '' : '，已停用' }}）
+                    </option>
+                  </select>
+                  <p v-if="selectedMediaServer && !selectedMediaServer.active" class="mt-2 text-xs text-red-300">
+                    ⚠️ 当前服务器已停用，请重新选择、启用配置或关闭刷新后再保存
+                  </p>
+                </div>
+
+                <div v-if="taskForm.mediaRefreshScope === 'LIBRARY'">
+                  <label class="block text-sm text-white/70 mb-2">目标媒体库 *</label>
+                  <select
+                    v-model="taskForm.mediaLibraryId"
+                    required
+                    class="input-field"
+                    :disabled="libraryLoadState === 'loading' || !taskForm.mediaServerConfigId"
+                    @change="onMediaLibraryChange"
+                  >
+                    <option value="" disabled>{{ libraryLoadState === 'loading' ? '正在读取媒体库...' : '请选择媒体库' }}</option>
+                    <option v-if="libraryConfirmedStale" :value="taskForm.mediaLibraryId" disabled>
+                      ⚠️ 已失效：{{ taskForm.mediaLibraryName || taskForm.mediaLibraryId }}
+                    </option>
+                    <option
+                      v-else-if="libraryLoadState === 'error' && taskForm.mediaLibraryId"
+                      :value="taskForm.mediaLibraryId"
+                      disabled
+                    >
+                      暂时无法验证：{{ taskForm.mediaLibraryName || taskForm.mediaLibraryId }}
+                    </option>
+                    <option v-for="library in mediaLibraries" :key="library.id" :value="library.id">
+                      {{ library.name }}
+                    </option>
+                  </select>
+                  <p v-if="libraryConfirmedStale" class="mt-2 text-xs text-red-300">
+                    ⚠️ 已保存的媒体库已不存在。系统不会按名称匹配，也不会回退为全部刷新，请重新选择后再保存。
+                  </p>
+                  <p v-else-if="libraryLoadState === 'error'" class="mt-2 text-xs text-amber-300">
+                    暂时无法验证媒体库：{{ libraryLoadError }}。已保留原配置，可继续保存其他修改。
+                  </p>
                 </div>
               </div>
 
@@ -580,6 +641,10 @@ const configId = route.params.id
 
 const configInfo = ref(null)
 const tasks = ref([])
+const mediaServers = ref([])
+const mediaLibraries = ref([])
+const libraryLoadState = ref('idle')
+const libraryLoadError = ref('')
 const loading = ref(true)
 const showCreateTaskModal = ref(false)
 const showEditTaskModal = ref(false)
@@ -605,11 +670,22 @@ const taskForm = ref({
   autoRenameMedia: false,
   skipInvalidStructure: false,
   renameRegex: '',
+  mediaServerConfigId: null,
+  mediaRefreshScope: 'NONE',
+  mediaLibraryId: '',
+  mediaLibraryName: '',
   isIncrement: true,
   isActive: true
 })
 const strmSubPath = ref('')
 const showRenameRegexHelp = ref(false)
+const selectedMediaServer = computed(() => mediaServers.value.find(server => server.id === taskForm.value.mediaServerConfigId))
+const libraryConfirmedStale = computed(() =>
+  taskForm.value.mediaRefreshScope === 'LIBRARY' &&
+  libraryLoadState.value === 'success' &&
+  Boolean(taskForm.value.mediaLibraryId) &&
+  !mediaLibraries.value.some(library => library.id === taskForm.value.mediaLibraryId)
+)
 
 watch(
   [() => taskForm.value.needScrap, () => taskForm.value.libraryType],
@@ -649,11 +725,66 @@ const fetchTasks = async () => {
   }
 }
 
+const fetchMediaServers = async () => {
+  try {
+    const response = await authenticatedApiCall('/media-servers', { method: 'GET' })
+    if (response.code === 200) mediaServers.value = response.data || []
+  } catch (error) {
+    logger.error('获取媒体服务器列表失败:', error)
+  }
+}
+
+const loadMediaLibraries = async () => {
+  mediaLibraries.value = []
+  libraryLoadError.value = ''
+  if (!taskForm.value.mediaServerConfigId) {
+    libraryLoadState.value = 'idle'
+    return
+  }
+  libraryLoadState.value = 'loading'
+  try {
+    const response = await authenticatedApiCall(`/media-servers/${taskForm.value.mediaServerConfigId}/libraries`, { method: 'GET' })
+    if (response.code !== 200) throw new Error(response.message || '媒体库读取失败')
+    mediaLibraries.value = response.data || []
+    libraryLoadState.value = 'success'
+  } catch (error) {
+    libraryLoadState.value = 'error'
+    libraryLoadError.value = error.message || '媒体库读取失败'
+  }
+}
+
+const onRefreshScopeChange = () => {
+  if (taskForm.value.mediaRefreshScope === 'NONE') {
+    taskForm.value.mediaServerConfigId = null
+    taskForm.value.mediaLibraryId = ''
+    taskForm.value.mediaLibraryName = ''
+    mediaLibraries.value = []
+    libraryLoadState.value = 'idle'
+  } else if (taskForm.value.mediaRefreshScope === 'ALL') {
+    taskForm.value.mediaLibraryId = ''
+    taskForm.value.mediaLibraryName = ''
+  } else if (taskForm.value.mediaServerConfigId) {
+    loadMediaLibraries()
+  }
+}
+
+const onMediaServerChange = () => {
+  taskForm.value.mediaLibraryId = ''
+  taskForm.value.mediaLibraryName = ''
+  loadMediaLibraries()
+}
+
+const onMediaLibraryChange = () => {
+  const selected = mediaLibraries.value.find(library => library.id === taskForm.value.mediaLibraryId)
+  taskForm.value.mediaLibraryName = selected?.name || ''
+}
+
 const resetTaskForm = () => {
   taskForm.value = {
     taskName: '', path: '', strmPath: '/app/backend/strm', cron: '',
     libraryType: '', needScrap: false, autoRenameMedia: false, skipInvalidStructure: false,
-    renameRegex: '', isIncrement: true, isActive: true
+    renameRegex: '', mediaServerConfigId: null, mediaRefreshScope: 'NONE', mediaLibraryId: '',
+    mediaLibraryName: '', isIncrement: true, isActive: true
   }
   strmSubPath.value = ''
   showRenameRegexHelp.value = false
@@ -666,11 +797,14 @@ const editTask = (task) => {
     libraryType: task.libraryType || 'auto', cron: task.cron || '', needScrap: task.needScrap || false,
     autoRenameMedia: task.autoRenameMedia || false,
     skipInvalidStructure: task.libraryType && task.libraryType !== 'auto' ? task.skipInvalidStructure || false : false,
-    renameRegex: task.renameRegex || '', isIncrement: task.isIncrement, isActive: task.isActive
+    renameRegex: task.renameRegex || '', mediaServerConfigId: task.mediaServerConfigId || null,
+    mediaRefreshScope: task.mediaRefreshScope || 'NONE', mediaLibraryId: task.mediaLibraryId || '',
+    mediaLibraryName: task.mediaLibraryName || '', isIncrement: task.isIncrement, isActive: task.isActive
   }
   const prefix = '/app/backend/strm/'
   strmSubPath.value = task.strmPath?.startsWith(prefix) ? task.strmPath.substring(prefix.length) : ''
   showEditTaskModal.value = true
+  if (taskForm.value.mediaRefreshScope === 'LIBRARY' && taskForm.value.mediaServerConfigId) loadMediaLibraries()
 }
 
 const validateTaskPath = async (taskPath) => {
@@ -693,6 +827,12 @@ const openManualScraping = (task) => {
 const submitTask = async () => {
   try {
     submitting.value = true
+    if (selectedMediaServer.value && !selectedMediaServer.value.active) {
+      throw new Error('选择的媒体服务器已停用，请重新选择或关闭刷新')
+    }
+    if (libraryConfirmedStale.value) {
+      throw new Error('已保存的媒体库已失效，请重新选择媒体库后再保存')
+    }
     if (taskForm.value.path) await validateTaskPath(taskForm.value.path)
     const fullStrmPath = '/app/backend/strm/' + (strmSubPath.value || '')
     const taskData = {
@@ -750,6 +890,15 @@ const libraryTypeLabel = (libraryType) => ({
   anime: '动画',
   auto: '自动识别'
 }[libraryType || 'auto'] || '自动识别')
+
+const taskRefreshLabel = (task) => {
+  if (!task.mediaRefreshScope || task.mediaRefreshScope === 'NONE') return '不刷新'
+  const server = mediaServers.value.find(item => item.id === task.mediaServerConfigId)
+  const serverName = server?.name || `配置 #${task.mediaServerConfigId}`
+  return task.mediaRefreshScope === 'ALL'
+    ? `${serverName} · 全部媒体库`
+    : `${serverName} · ${task.mediaLibraryName || '指定媒体库'}`
+}
 
 const showExecuteModal = (taskId) => {
   currentTaskId.value = taskId
@@ -851,5 +1000,6 @@ const closeStructureCheckModal = () => {
 onMounted(() => {
   getConfigInfo()
   fetchTasks()
+  fetchMediaServers()
 })
 </script>

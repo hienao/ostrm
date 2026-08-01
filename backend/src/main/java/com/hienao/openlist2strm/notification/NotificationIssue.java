@@ -18,7 +18,8 @@ public record NotificationIssue(
     SCRAPE_UNRECOGNIZED,
     DIRECTORY_RENAME_FAILED,
     FILE_RENAME_FAILED,
-    PROCESSING_FAILED
+    PROCESSING_FAILED,
+    MEDIA_SERVER_REFRESH_FAILED
   }
 
   /** 用于同一任务内合并自动重命名和正式刮削产生的重复异常。 */

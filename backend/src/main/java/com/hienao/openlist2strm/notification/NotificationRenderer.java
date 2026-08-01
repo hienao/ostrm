@@ -53,6 +53,25 @@ public class NotificationRenderer {
       if (event.getCleanedStrm() > 0) {
         add(lines, "清理失效 STRM", event.getCleanedStrm() + " 个");
       }
+      if (event.getMediaServerName() != null) {
+        lines.add("");
+        add(
+            lines,
+            "媒体服务器",
+            event.getMediaServerName() + serverTypeSuffix(event.getMediaServerType()));
+        add(lines, "刷新范围", refreshScopeLabel(event.getMediaRefreshScope()));
+        if (event.getMediaLibraryName() != null) {
+          add(lines, "目标媒体库", event.getMediaLibraryName());
+        }
+        add(lines, "刷新结果", refreshStatusLabel(event.getMediaRefreshStatus()));
+        if ("FAILED".equals(event.getMediaRefreshStatus())
+            && event.getMediaRefreshMessage() != null) {
+          add(lines, "刷新错误", event.getMediaRefreshMessage());
+        } else if ("SKIPPED".equals(event.getMediaRefreshStatus())
+            && event.getMediaRefreshMessage() != null) {
+          add(lines, "刷新说明", event.getMediaRefreshMessage());
+        }
+      }
     } else {
       add(lines, "媒体类型", libraryTypeLabel(event.getMediaType()));
       if (event.getTmdbId() != null) {
@@ -100,6 +119,7 @@ public class NotificationRenderer {
     addCount(lines, "刮削未识别", counts.get(NotificationIssue.Category.SCRAPE_UNRECOGNIZED));
     addCount(lines, "目录重命名失败", counts.get(NotificationIssue.Category.DIRECTORY_RENAME_FAILED));
     addCount(lines, "文件重命名失败", counts.get(NotificationIssue.Category.FILE_RENAME_FAILED));
+    addCount(lines, "媒体库刷新失败", counts.get(NotificationIssue.Category.MEDIA_SERVER_REFRESH_FAILED));
   }
 
   private void addCount(List<String> lines, String label, Long value) {
@@ -244,6 +264,11 @@ public class NotificationRenderer {
       case "TITLE_UNAVAILABLE" -> "无法提取标题";
       case "TMDB_NOT_MATCHED" -> "TMDB 未匹配";
       case "UNSUPPORTED_MEDIA_TYPE" -> "无法确定媒体类型";
+      case "MEDIA_LIBRARY_NOT_FOUND" -> "媒体库已失效";
+      case "MEDIA_LIBRARY_PATH_EMPTY" -> "媒体库路径为空";
+      case "MEDIA_SERVER_DISABLED" -> "媒体服务器已停用";
+      case "MEDIA_SERVER_NOT_FOUND" -> "媒体服务器配置不存在";
+      case "MEDIA_SERVER_REFRESH_FAILED" -> "刷新请求失败";
       default -> reasonCode;
     };
   }
@@ -254,6 +279,34 @@ public class NotificationRenderer {
       case DIRECTORY_RENAME_FAILED -> "目录重命名失败";
       case FILE_RENAME_FAILED -> "文件重命名失败";
       case PROCESSING_FAILED -> "处理失败";
+      case MEDIA_SERVER_REFRESH_FAILED -> "媒体库刷新失败";
+    };
+  }
+
+  private String serverTypeSuffix(String type) {
+    return type == null ? "" : "（" + type + "）";
+  }
+
+  private String refreshScopeLabel(String scope) {
+    if (scope == null) {
+      return null;
+    }
+    return switch (scope) {
+      case "ALL" -> "全部媒体库";
+      case "LIBRARY" -> "指定媒体库（精确刷新）";
+      default -> "不刷新";
+    };
+  }
+
+  private String refreshStatusLabel(String status) {
+    if (status == null) {
+      return null;
+    }
+    return switch (status) {
+      case "TRIGGERED" -> "已提交刷新请求";
+      case "SKIPPED" -> "已跳过";
+      case "FAILED" -> "失败";
+      default -> status;
     };
   }
 

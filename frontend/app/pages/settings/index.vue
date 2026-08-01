@@ -241,6 +241,82 @@
           </div>
         </div>
 
+        <!-- 媒体服务器 -->
+        <div class="card">
+          <div class="flex items-center justify-between gap-4 mb-4">
+            <div>
+              <h3 class="text-lg font-semibold text-white">Emby / Jellyfin</h3>
+              <p class="mt-1 text-xs text-white/40">供任务在 STRM 生成完成后刷新全部或指定媒体库</p>
+            </div>
+            <button type="button" class="btn-primary" @click="openMediaServerEditor()">添加服务器</button>
+          </div>
+
+          <div v-if="mediaServers.length" class="space-y-3">
+            <div v-for="server in mediaServers" :key="server.id" class="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium text-white">{{ server.name }}</span>
+                    <span class="badge-neutral text-xs">{{ server.serverType }}</span>
+                    <span :class="server.active ? 'badge-success' : 'badge-neutral'" class="text-xs">{{ server.active ? '启用' : '停用' }}</span>
+                  </div>
+                  <div class="mt-1 break-all font-mono text-xs text-white/35">{{ server.apiBaseUrl }}</div>
+                </div>
+                <div class="flex gap-2">
+                  <button type="button" class="btn-secondary" @click="testSavedMediaServer(server)" :disabled="testingMediaServerId === server.id">
+                    {{ testingMediaServerId === server.id ? '测试中...' : '测试' }}
+                  </button>
+                  <button type="button" class="btn-secondary" @click="openMediaServerEditor(server)">编辑</button>
+                  <button type="button" class="btn-secondary text-red-300" @click="deleteMediaServer(server)">删除</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p v-else class="rounded-xl bg-white/5 p-5 text-center text-sm text-white/40">尚未添加媒体服务器</p>
+
+          <div v-if="showMediaServerEditor" class="mt-5 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-4">
+            <div class="flex items-center justify-between">
+              <h4 class="font-medium text-white">{{ editingMediaServerId ? '编辑媒体服务器' : '添加媒体服务器' }}</h4>
+              <button type="button" class="btn-icon" @click="closeMediaServerEditor">×</button>
+            </div>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label class="block text-sm text-white/70 mb-2">配置名称 *</label>
+                <input v-model="mediaServerForm.name" class="input-field" placeholder="例如：客厅 Jellyfin" />
+              </div>
+              <div>
+                <label class="block text-sm text-white/70 mb-2">类型 *</label>
+                <select v-model="mediaServerForm.serverType" class="input-field">
+                  <option value="EMBY">Emby</option>
+                  <option value="JELLYFIN">Jellyfin</option>
+                </select>
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-sm text-white/70 mb-2">API 根地址 *</label>
+                <input v-model="mediaServerForm.apiBaseUrl" type="url" class="input-field" :placeholder="mediaServerForm.serverType === 'EMBY' ? 'http://emby:8096/emby' : 'http://jellyfin:8096'" />
+                <p class="mt-1 text-xs text-white/30">请填写完整 API 根路径；Emby 常包含 /emby，Jellyfin 通常不包含额外路径</p>
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-sm text-white/70 mb-2">API Key {{ editingMediaServerId ? '' : '*' }}</label>
+                <input v-model="mediaServerForm.apiKey" type="password" class="input-field" :placeholder="editingMediaServerId ? '留空则保留当前 API Key' : '请输入 API Key'" />
+              </div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input v-model="mediaServerForm.isActive" type="checkbox" class="h-4 w-4 rounded" />
+              <span class="text-sm text-white/70">启用此服务器</span>
+            </label>
+            <div class="flex flex-wrap items-center gap-3">
+              <button type="button" class="btn-success" @click="testMediaServerForm" :disabled="testingMediaServerForm">{{ testingMediaServerForm ? '测试中...' : '测试连接' }}</button>
+              <button type="button" class="btn-primary" @click="saveMediaServer" :disabled="savingMediaServer">{{ savingMediaServer ? '保存中...' : '保存服务器' }}</button>
+              <button type="button" class="btn-secondary" @click="closeMediaServerEditor">取消</button>
+            </div>
+          </div>
+
+          <p v-if="mediaServerMessage" :class="mediaServerMessage.success ? 'text-emerald-400' : 'text-red-400'" class="mt-3 text-sm">
+            {{ mediaServerMessage.text }}
+          </p>
+        </div>
+
         <!-- 通知配置 -->
         <div class="card">
           <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -447,6 +523,14 @@ const testingAi = ref(false)
 const aiTestResult = ref(null)
 const testingNotification = ref(false)
 const notificationTestResult = ref(null)
+const mediaServers = ref([])
+const showMediaServerEditor = ref(false)
+const editingMediaServerId = ref(null)
+const savingMediaServer = ref(false)
+const testingMediaServerForm = ref(false)
+const testingMediaServerId = ref(null)
+const mediaServerMessage = ref(null)
+const mediaServerForm = ref({ name: '', serverType: 'JELLYFIN', apiBaseUrl: '', apiKey: '', isActive: true })
 
 // TMDB 域名选项
 const tmdbApiDomainOptions = [
@@ -533,6 +617,99 @@ const loadCurrentSettings = async () => {
   } catch { selectedExtensions.value = ['.mp4', '.avi', '.rmvb', '.mkv', '.iso'] }
 }
 
+const loadMediaServers = async () => {
+  try {
+    const response = await authenticatedApiCall('/media-servers')
+    if (response?.code === 200) mediaServers.value = response.data || []
+  } catch {
+    mediaServerMessage.value = { success: false, text: '媒体服务器配置加载失败' }
+  }
+}
+
+const openMediaServerEditor = (server = null) => {
+  editingMediaServerId.value = server?.id || null
+  mediaServerForm.value = server
+    ? { name: server.name, serverType: server.serverType, apiBaseUrl: server.apiBaseUrl, apiKey: '', isActive: server.active }
+    : { name: '', serverType: 'JELLYFIN', apiBaseUrl: '', apiKey: '', isActive: true }
+  mediaServerMessage.value = null
+  showMediaServerEditor.value = true
+}
+
+const closeMediaServerEditor = () => {
+  showMediaServerEditor.value = false
+  editingMediaServerId.value = null
+}
+
+const validateMediaServerForm = () => {
+  if (!mediaServerForm.value.name || !mediaServerForm.value.apiBaseUrl) throw new Error('请填写配置名称和 API 根地址')
+  if (!editingMediaServerId.value && !mediaServerForm.value.apiKey) throw new Error('请填写 API Key')
+}
+
+const saveMediaServer = async () => {
+  savingMediaServer.value = true
+  mediaServerMessage.value = null
+  try {
+    validateMediaServerForm()
+    const response = await authenticatedApiCall(
+      editingMediaServerId.value ? `/media-servers/${editingMediaServerId.value}` : '/media-servers',
+      { method: editingMediaServerId.value ? 'PUT' : 'POST', body: mediaServerForm.value }
+    )
+    if (response?.code !== 200) throw new Error(response?.message || '保存失败')
+    await loadMediaServers()
+    closeMediaServerEditor()
+    mediaServerMessage.value = { success: true, text: '媒体服务器配置已保存' }
+  } catch (error) {
+    mediaServerMessage.value = { success: false, text: error.message || '保存失败' }
+  } finally {
+    savingMediaServer.value = false
+  }
+}
+
+const testMediaServerForm = async () => {
+  testingMediaServerForm.value = true
+  mediaServerMessage.value = null
+  try {
+    validateMediaServerForm()
+    const response = editingMediaServerId.value && !mediaServerForm.value.apiKey
+      ? await authenticatedApiCall(`/media-servers/${editingMediaServerId.value}/test`, { method: 'POST' })
+      : await authenticatedApiCall('/media-servers/test', { method: 'POST', body: mediaServerForm.value })
+    if (response?.code !== 200) throw new Error(response?.message || '连接测试失败')
+    const result = response.data
+    mediaServerMessage.value = { success: true, text: `连接成功：${result.serverName || '媒体服务器'} ${result.version || ''}，发现 ${result.libraryCount} 个媒体库` }
+  } catch (error) {
+    mediaServerMessage.value = { success: false, text: error.message || '连接测试失败' }
+  } finally {
+    testingMediaServerForm.value = false
+  }
+}
+
+const testSavedMediaServer = async (server) => {
+  testingMediaServerId.value = server.id
+  mediaServerMessage.value = null
+  try {
+    const response = await authenticatedApiCall(`/media-servers/${server.id}/test`, { method: 'POST' })
+    if (response?.code !== 200) throw new Error(response?.message || '连接测试失败')
+    mediaServerMessage.value = { success: true, text: `${server.name} 连接成功，发现 ${response.data.libraryCount} 个媒体库` }
+  } catch (error) {
+    mediaServerMessage.value = { success: false, text: error.message || '连接测试失败' }
+  } finally {
+    testingMediaServerId.value = null
+  }
+}
+
+const deleteMediaServer = async (server) => {
+  if (!confirm(`确定删除媒体服务器“${server.name}”吗？`)) return
+  mediaServerMessage.value = null
+  try {
+    const response = await authenticatedApiCall(`/media-servers/${server.id}`, { method: 'DELETE' })
+    if (response?.code !== 200) throw new Error(response?.message || '删除失败')
+    await loadMediaServers()
+    mediaServerMessage.value = { success: true, text: '媒体服务器配置已删除' }
+  } catch (error) {
+    mediaServerMessage.value = { success: false, text: error.message || '删除失败' }
+  }
+}
+
 const saveSettings = async () => {
   if (selectedExtensions.value.length === 0) { errorMessage.value = '请至少选择一个媒体文件后缀'; setTimeout(() => errorMessage.value = '', 3000); return }
   saving.value = true
@@ -585,7 +762,10 @@ const testNotification = async () => {
 const toggleApiKeyVisibility = () => showApiKey.value = !showApiKey.value
 const goBack = () => router.back()
 
-onMounted(loadCurrentSettings)
+onMounted(() => {
+  loadCurrentSettings()
+  loadMediaServers()
+})
 </script>
 
 <style scoped>

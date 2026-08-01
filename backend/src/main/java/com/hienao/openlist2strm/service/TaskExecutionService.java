@@ -68,6 +68,7 @@ public class TaskExecutionService {
   private final TaskManifestService taskManifestService;
   private final ManualScrapingService manualScrapingService;
   private final NotificationService notificationService;
+  private final MediaServerApiService mediaServerApiService;
   private final FileProcessorChain fileProcessorChain;
   private final Executor taskSubmitExecutor;
   private final Object taskSubmissionLock = new Object();
@@ -132,6 +133,7 @@ public class TaskExecutionService {
 
       // 执行具体的任务逻辑
       NotificationEvent event = executeTaskLogic(taskConfig, useIncrement);
+      applyMediaServerRefresh(event, taskConfig, useIncrement);
       event.setTrigger(trigger);
       event.setDurationMillis(elapsedMillis(startedNanos));
       event.setCompletedAt(LocalDateTime.now());
@@ -170,6 +172,36 @@ public class TaskExecutionService {
     } catch (Exception e) {
       // 通知是附加能力，不得因配置、渲染或线程池异常改变任务结果。
       log.error("提交任务通知失败 - 任务ID: {}", event.getTaskId(), e);
+    }
+  }
+
+  private void applyMediaServerRefresh(
+      NotificationEvent event, TaskConfig taskConfig, boolean incremental) {
+    boolean hasChanges =
+        event.getSelectedVideos() > 0
+            || event.getCleanedStrm() > 0
+            || event.getRenamedDirectories() > 0
+            || event.getRenamedFiles() > 0;
+    MediaServerRefreshResult result =
+        mediaServerApiService.refreshAfterTask(taskConfig, incremental, hasChanges);
+    event.setMediaServerName(result.serverName());
+    event.setMediaServerType(result.serverType());
+    event.setMediaRefreshScope(result.scope());
+    event.setMediaLibraryName(result.libraryName());
+    event.setMediaRefreshStatus(result.status().name());
+    event.setMediaRefreshMessage(result.message());
+    if (result.status() == MediaServerRefreshResult.Status.FAILED) {
+      event.setStatus(NotificationEvent.Status.PARTIAL_SUCCESS);
+      List<NotificationIssue> issues = new ArrayList<>(event.getIssues());
+      issues.add(
+          NotificationIssue.builder()
+              .category(NotificationIssue.Category.MEDIA_SERVER_REFRESH_FAILED)
+              .reasonCode(result.failureCode())
+              .scope(result.libraryName())
+              .sourcePath(result.serverName())
+              .reason(result.message())
+              .build());
+      event.setIssues(issues);
     }
   }
 

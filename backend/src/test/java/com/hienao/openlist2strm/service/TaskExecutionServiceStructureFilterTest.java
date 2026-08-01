@@ -19,7 +19,18 @@ class TaskExecutionServiceStructureFilterTest {
     strmFileService = mock(StrmFileService.class);
     service =
         new TaskExecutionService(
-            null, null, null, strmFileService, null, null, null, null, null, null, Runnable::run);
+            null,
+            null,
+            null,
+            strmFileService,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            Runnable::run);
   }
 
   @Test
