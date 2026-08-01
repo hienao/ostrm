@@ -241,6 +241,154 @@
           </div>
         </div>
 
+        <!-- 媒体服务器 -->
+        <div class="card">
+          <div class="flex items-center justify-between gap-4 mb-4">
+            <div>
+              <h3 class="text-lg font-semibold text-white">Emby / Jellyfin</h3>
+              <p class="mt-1 text-xs text-white/40">供任务在 STRM 生成完成后刷新全部或指定媒体库</p>
+            </div>
+            <button type="button" class="btn-primary" @click="openMediaServerEditor()">添加服务器</button>
+          </div>
+
+          <div v-if="mediaServers.length" class="space-y-3">
+            <div v-for="server in mediaServers" :key="server.id" class="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium text-white">{{ server.name }}</span>
+                    <span class="badge-neutral text-xs">{{ server.serverType }}</span>
+                    <span :class="server.active ? 'badge-success' : 'badge-neutral'" class="text-xs">{{ server.active ? '启用' : '停用' }}</span>
+                  </div>
+                  <div class="mt-1 break-all font-mono text-xs text-white/35">{{ server.apiBaseUrl }}</div>
+                </div>
+                <div class="flex gap-2">
+                  <button type="button" class="btn-secondary" @click="testSavedMediaServer(server)" :disabled="testingMediaServerId === server.id">
+                    {{ testingMediaServerId === server.id ? '测试中...' : '测试' }}
+                  </button>
+                  <button type="button" class="btn-secondary" @click="openMediaServerEditor(server)">编辑</button>
+                  <button type="button" class="btn-secondary text-red-300" @click="deleteMediaServer(server)">删除</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p v-else class="rounded-xl bg-white/5 p-5 text-center text-sm text-white/40">尚未添加媒体服务器</p>
+
+          <div v-if="showMediaServerEditor" class="mt-5 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-4">
+            <div class="flex items-center justify-between">
+              <h4 class="font-medium text-white">{{ editingMediaServerId ? '编辑媒体服务器' : '添加媒体服务器' }}</h4>
+              <button type="button" class="btn-icon" @click="closeMediaServerEditor">×</button>
+            </div>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label class="block text-sm text-white/70 mb-2">配置名称 *</label>
+                <input v-model="mediaServerForm.name" class="input-field" placeholder="例如：客厅 Jellyfin" />
+              </div>
+              <div>
+                <label class="block text-sm text-white/70 mb-2">类型 *</label>
+                <select v-model="mediaServerForm.serverType" class="input-field">
+                  <option value="EMBY">Emby</option>
+                  <option value="JELLYFIN">Jellyfin</option>
+                </select>
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-sm text-white/70 mb-2">API 根地址 *</label>
+                <input v-model="mediaServerForm.apiBaseUrl" type="url" class="input-field" :placeholder="mediaServerForm.serverType === 'EMBY' ? 'http://emby:8096/emby' : 'http://jellyfin:8096'" />
+                <p class="mt-1 text-xs text-white/30">请填写完整 API 根路径；Emby 常包含 /emby，Jellyfin 通常不包含额外路径</p>
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-sm text-white/70 mb-2">API Key {{ editingMediaServerId ? '' : '*' }}</label>
+                <input v-model="mediaServerForm.apiKey" type="password" class="input-field" :placeholder="editingMediaServerId ? '留空则保留当前 API Key' : '请输入 API Key'" />
+              </div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input v-model="mediaServerForm.isActive" type="checkbox" class="h-4 w-4 rounded" />
+              <span class="text-sm text-white/70">启用此服务器</span>
+            </label>
+            <div class="flex flex-wrap items-center gap-3">
+              <button type="button" class="btn-success" @click="testMediaServerForm" :disabled="testingMediaServerForm">{{ testingMediaServerForm ? '测试中...' : '测试连接' }}</button>
+              <button type="button" class="btn-primary" @click="saveMediaServer" :disabled="savingMediaServer">{{ savingMediaServer ? '保存中...' : '保存服务器' }}</button>
+              <button type="button" class="btn-secondary" @click="closeMediaServerEditor">取消</button>
+            </div>
+          </div>
+
+          <p v-if="mediaServerMessage" :class="mediaServerMessage.success ? 'text-emerald-400' : 'text-red-400'" class="mt-3 text-sm">
+            {{ mediaServerMessage.text }}
+          </p>
+        </div>
+
+        <!-- 通知配置 -->
+        <div class="card">
+          <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <svg class="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            任务通知
+          </h3>
+          <div class="space-y-5">
+            <label class="flex items-start gap-3 p-4 bg-violet-500/5 rounded-xl border border-violet-500/10 cursor-pointer">
+              <input id="notificationEnabled" v-model="notificationConfig.enabled" type="checkbox" class="h-5 w-5 rounded mt-0.5" />
+              <div>
+                <span class="text-sm font-medium text-white">启用 Apprise 通知</span>
+                <p class="text-xs text-white/40 mt-1">普通任务和手动刮削到达终态后发送通知，默认关闭</p>
+              </div>
+            </label>
+
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div class="sm:col-span-2">
+                <label for="appriseServerUrl" class="block text-sm text-white/70 mb-2">Apprise 服务地址</label>
+                <input id="appriseServerUrl" v-model="notificationConfig.serverUrl" type="url" class="input-field" placeholder="http://apprise:8000" />
+              </div>
+              <div>
+                <label for="appriseConfigKey" class="block text-sm text-white/70 mb-2">配置 Key</label>
+                <input id="appriseConfigKey" v-model="notificationConfig.configKey" type="text" class="input-field" placeholder="ostrm" />
+                <p class="mt-1 text-xs text-white/30">对应 Apprise API 中保存的配置标识</p>
+              </div>
+              <div>
+                <label for="appriseTags" class="block text-sm text-white/70 mb-2">通知标签</label>
+                <input id="appriseTags" v-model="notificationConfig.tags" type="text" class="input-field" placeholder="all" />
+                <p class="mt-1 text-xs text-white/30">由 Apprise 将标签路由到一个或多个下游渠道</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label class="flex items-center gap-2 p-3 bg-white/5 rounded-xl cursor-pointer">
+                <input v-model="notificationConfig.notifyOnSuccess" type="checkbox" class="h-4 w-4 rounded" />
+                <span class="text-sm text-white/70">成功通知</span>
+              </label>
+              <label class="flex items-center gap-2 p-3 bg-white/5 rounded-xl cursor-pointer">
+                <input v-model="notificationConfig.notifyOnPartialSuccess" type="checkbox" class="h-4 w-4 rounded" />
+                <span class="text-sm text-white/70">部分完成通知</span>
+              </label>
+              <label class="flex items-center gap-2 p-3 bg-white/5 rounded-xl cursor-pointer">
+                <input v-model="notificationConfig.notifyOnFailure" type="checkbox" class="h-4 w-4 rounded" />
+                <span class="text-sm text-white/70">失败通知</span>
+              </label>
+            </div>
+
+            <label class="flex items-start gap-3 p-4 bg-white/5 rounded-xl cursor-pointer">
+              <input v-model="notificationConfig.includeFullPath" type="checkbox" class="h-5 w-5 rounded mt-0.5" />
+              <div>
+                <span class="text-sm font-medium text-white">通知中显示完整路径</span>
+                <p class="text-xs text-white/40 mt-1">完整路径有助于定位失败文件，但通知发送到外部渠道时可能包含目录结构等隐私信息。关闭后仅展示目录名和文件名。</p>
+              </div>
+            </label>
+
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="w-44">
+                <label for="notificationMaxDetails" class="block text-sm text-white/70 mb-2">每类最多展示</label>
+                <input id="notificationMaxDetails" v-model.number="notificationConfig.maxDetailItems" type="number" min="1" max="20" class="input-field" />
+              </div>
+              <button type="button" @click="testNotification" class="btn-success" :disabled="testingNotification">
+                {{ testingNotification ? '发送中...' : '发送测试通知' }}
+              </button>
+              <span v-if="notificationTestResult" :class="notificationTestResult.success ? 'text-emerald-400' : 'text-red-400'" class="text-sm font-medium">
+                {{ notificationTestResult.message }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <!-- 日志配置 -->
         <div class="card">
           <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -355,6 +503,17 @@ const selectedExtensions = ref([])
 const tmdbConfig = ref({ apiKey: '', language: 'zh-CN', region: 'CN', proxyHost: '', proxyPort: '', baseUrl: 'https://api.themoviedb.org', imageBaseUrl: 'https://image.tmdb.org' })
 const scrapingConfig = ref({ enabled: true, keepSubtitleFiles: false, useExistingScrapingInfo: false })
 const aiConfig = ref({ enabled: false, baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-3.5-turbo', qpmLimit: 60 })
+const notificationConfig = ref({
+  enabled: false,
+  notifyOnSuccess: true,
+  notifyOnPartialSuccess: true,
+  notifyOnFailure: true,
+  includeFullPath: true,
+  maxDetailItems: 5,
+  serverUrl: 'http://apprise:8000',
+  configKey: 'ostrm',
+  tags: 'all'
+})
 const logConfig = ref({ retentionDays: 7, level: 'info', reportUsageData: true })
 const showApiKey = ref(false)
 const saving = ref(false)
@@ -362,6 +521,16 @@ const showSuccess = ref(false)
 const errorMessage = ref('')
 const testingAi = ref(false)
 const aiTestResult = ref(null)
+const testingNotification = ref(false)
+const notificationTestResult = ref(null)
+const mediaServers = ref([])
+const showMediaServerEditor = ref(false)
+const editingMediaServerId = ref(null)
+const savingMediaServer = ref(false)
+const testingMediaServerForm = ref(false)
+const testingMediaServerId = ref(null)
+const mediaServerMessage = ref(null)
+const mediaServerForm = ref({ name: '', serverType: 'JELLYFIN', apiBaseUrl: '', apiKey: '', isActive: true })
 
 // TMDB 域名选项
 const tmdbApiDomainOptions = [
@@ -442,9 +611,103 @@ const loadCurrentSettings = async () => {
       }
       if (config.scraping) scrapingConfig.value = { ...scrapingConfig.value, ...config.scraping }
       if (config.ai) aiConfig.value = { ...aiConfig.value, ...config.ai }
+      if (config.notifications) notificationConfig.value = { ...notificationConfig.value, ...config.notifications }
       if (config.log) logConfig.value = { ...logConfig.value, ...config.log }
     } else selectedExtensions.value = ['.mp4', '.avi', '.rmvb', '.mkv', '.iso']
   } catch { selectedExtensions.value = ['.mp4', '.avi', '.rmvb', '.mkv', '.iso'] }
+}
+
+const loadMediaServers = async () => {
+  try {
+    const response = await authenticatedApiCall('/media-servers')
+    if (response?.code === 200) mediaServers.value = response.data || []
+  } catch {
+    mediaServerMessage.value = { success: false, text: '媒体服务器配置加载失败' }
+  }
+}
+
+const openMediaServerEditor = (server = null) => {
+  editingMediaServerId.value = server?.id || null
+  mediaServerForm.value = server
+    ? { name: server.name, serverType: server.serverType, apiBaseUrl: server.apiBaseUrl, apiKey: '', isActive: server.active }
+    : { name: '', serverType: 'JELLYFIN', apiBaseUrl: '', apiKey: '', isActive: true }
+  mediaServerMessage.value = null
+  showMediaServerEditor.value = true
+}
+
+const closeMediaServerEditor = () => {
+  showMediaServerEditor.value = false
+  editingMediaServerId.value = null
+}
+
+const validateMediaServerForm = () => {
+  if (!mediaServerForm.value.name || !mediaServerForm.value.apiBaseUrl) throw new Error('请填写配置名称和 API 根地址')
+  if (!editingMediaServerId.value && !mediaServerForm.value.apiKey) throw new Error('请填写 API Key')
+}
+
+const saveMediaServer = async () => {
+  savingMediaServer.value = true
+  mediaServerMessage.value = null
+  try {
+    validateMediaServerForm()
+    const response = await authenticatedApiCall(
+      editingMediaServerId.value ? `/media-servers/${editingMediaServerId.value}` : '/media-servers',
+      { method: editingMediaServerId.value ? 'PUT' : 'POST', body: mediaServerForm.value }
+    )
+    if (response?.code !== 200) throw new Error(response?.message || '保存失败')
+    await loadMediaServers()
+    closeMediaServerEditor()
+    mediaServerMessage.value = { success: true, text: '媒体服务器配置已保存' }
+  } catch (error) {
+    mediaServerMessage.value = { success: false, text: error.message || '保存失败' }
+  } finally {
+    savingMediaServer.value = false
+  }
+}
+
+const testMediaServerForm = async () => {
+  testingMediaServerForm.value = true
+  mediaServerMessage.value = null
+  try {
+    validateMediaServerForm()
+    const response = editingMediaServerId.value && !mediaServerForm.value.apiKey
+      ? await authenticatedApiCall(`/media-servers/${editingMediaServerId.value}/test`, { method: 'POST' })
+      : await authenticatedApiCall('/media-servers/test', { method: 'POST', body: mediaServerForm.value })
+    if (response?.code !== 200) throw new Error(response?.message || '连接测试失败')
+    const result = response.data
+    mediaServerMessage.value = { success: true, text: `连接成功：${result.serverName || '媒体服务器'} ${result.version || ''}，发现 ${result.libraryCount} 个媒体库` }
+  } catch (error) {
+    mediaServerMessage.value = { success: false, text: error.message || '连接测试失败' }
+  } finally {
+    testingMediaServerForm.value = false
+  }
+}
+
+const testSavedMediaServer = async (server) => {
+  testingMediaServerId.value = server.id
+  mediaServerMessage.value = null
+  try {
+    const response = await authenticatedApiCall(`/media-servers/${server.id}/test`, { method: 'POST' })
+    if (response?.code !== 200) throw new Error(response?.message || '连接测试失败')
+    mediaServerMessage.value = { success: true, text: `${server.name} 连接成功，发现 ${response.data.libraryCount} 个媒体库` }
+  } catch (error) {
+    mediaServerMessage.value = { success: false, text: error.message || '连接测试失败' }
+  } finally {
+    testingMediaServerId.value = null
+  }
+}
+
+const deleteMediaServer = async (server) => {
+  if (!confirm(`确定删除媒体服务器“${server.name}”吗？`)) return
+  mediaServerMessage.value = null
+  try {
+    const response = await authenticatedApiCall(`/media-servers/${server.id}`, { method: 'DELETE' })
+    if (response?.code !== 200) throw new Error(response?.message || '删除失败')
+    await loadMediaServers()
+    mediaServerMessage.value = { success: true, text: '媒体服务器配置已删除' }
+  } catch (error) {
+    mediaServerMessage.value = { success: false, text: error.message || '删除失败' }
+  }
 }
 
 const saveSettings = async () => {
@@ -454,7 +717,7 @@ const saveSettings = async () => {
   try {
     const response = await authenticatedApiCall('/system/config', {
       method: 'POST',
-      body: { mediaExtensions: selectedExtensions.value, tmdb: tmdbConfig.value, scraping: scrapingConfig.value, ai: aiConfig.value, log: logConfig.value }
+      body: { mediaExtensions: selectedExtensions.value, tmdb: tmdbConfig.value, scraping: scrapingConfig.value, ai: aiConfig.value, notifications: notificationConfig.value, log: logConfig.value }
     })
     if (response?.code === 200) { showSuccess.value = true; setTimeout(() => showSuccess.value = false, 3000) }
     else { errorMessage.value = response?.message || '保存设置失败'; setTimeout(() => errorMessage.value = '', 3000) }
@@ -473,10 +736,36 @@ const testAiConfig = async () => {
   finally { testingAi.value = false; setTimeout(() => aiTestResult.value = null, 3000) }
 }
 
+const testNotification = async () => {
+  if (!notificationConfig.value.serverUrl || !notificationConfig.value.configKey) {
+    notificationTestResult.value = { success: false, message: '请填写 Apprise 服务地址和配置 Key' }
+    return
+  }
+  testingNotification.value = true
+  notificationTestResult.value = null
+  try {
+    const response = await authenticatedApiCall('/system/test-notification', {
+      method: 'POST',
+      body: { notifications: notificationConfig.value }
+    })
+    notificationTestResult.value = response?.code === 200
+      ? { success: true, message: '测试通知发送成功' }
+      : { success: false, message: response?.message || '测试通知发送失败' }
+  } catch {
+    notificationTestResult.value = { success: false, message: '测试通知发送失败' }
+  } finally {
+    testingNotification.value = false
+    setTimeout(() => notificationTestResult.value = null, 5000)
+  }
+}
+
 const toggleApiKeyVisibility = () => showApiKey.value = !showApiKey.value
 const goBack = () => router.back()
 
-onMounted(loadCurrentSettings)
+onMounted(() => {
+  loadCurrentSettings()
+  loadMediaServers()
+})
 </script>
 
 <style scoped>

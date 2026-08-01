@@ -59,6 +59,10 @@ public interface TaskConfigMapper {
    */
   List<TaskConfig> selectWithCron();
 
+  /** 查询引用指定媒体服务器的任务。 */
+  List<TaskConfig> selectByMediaServerConfigId(
+      @Param("mediaServerConfigId") Long mediaServerConfigId);
+
   /**
    * 插入任务配置
    *

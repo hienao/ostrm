@@ -2,6 +2,7 @@ package com.hienao.openlist2strm.controller;
 
 import com.hienao.openlist2strm.dto.ApiResponse;
 import com.hienao.openlist2strm.service.AiFileNameRecognitionService;
+import com.hienao.openlist2strm.service.NotificationService;
 import com.hienao.openlist2strm.service.SystemConfigService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,6 +28,7 @@ public class SystemConfigController {
 
   private final SystemConfigService systemConfigService;
   private final AiFileNameRecognitionService aiFileNameRecognitionService;
+  private final NotificationService notificationService;
 
   /** 获取系统配置 */
   @GetMapping("/config")
@@ -91,6 +93,20 @@ public class SystemConfigController {
     } catch (Exception e) {
       log.error("保存系统配置失败", e);
       return ResponseEntity.ok(ApiResponse.error("保存系统配置失败: " + e.getMessage()));
+    }
+  }
+
+  /** 使用当前表单中的 Apprise 配置发送测试通知。 */
+  @PostMapping("/test-notification")
+  @Operation(summary = "测试通知配置", description = "通过 Apprise 发送一条测试通知")
+  public ResponseEntity<ApiResponse<String>> testNotification(
+      @RequestBody Map<String, Object> config) {
+    try {
+      notificationService.testApprise(config);
+      return ResponseEntity.ok(ApiResponse.success("测试通知发送成功"));
+    } catch (Exception e) {
+      log.error("测试通知发送失败: {}", e.getMessage());
+      return ResponseEntity.ok(ApiResponse.error("测试通知发送失败: " + e.getMessage()));
     }
   }
 

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hienao.openlist2strm.mapper.MediaServerConfigMapper">
+    <resultMap id="BaseResultMap" type="com.hienao.openlist2strm.entity.MediaServerConfig">
+        <id column="id" property="id" jdbcType="BIGINT"/>
+        <result column="name" property="name" jdbcType="VARCHAR"/>
+        <result column="server_type" property="serverType" jdbcType="VARCHAR"/>
+        <result column="api_base_url" property="apiBaseUrl" jdbcType="VARCHAR"/>
+        <result column="api_key" property="apiKey" jdbcType="VARCHAR"/>
+        <result column="is_active" property="isActive" jdbcType="BOOLEAN"/>
+        <result column="created_at" property="createdAt" jdbcType="TIMESTAMP"/>
+        <result column="updated_at" property="updatedAt" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <sql id="BaseColumns">
+        id, name, server_type, api_base_url, api_key, is_active, created_at, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="BaseColumns"/> FROM media_server_config WHERE id = #{id}
+    </select>
+    <select id="selectByName" resultMap="BaseResultMap">
+        SELECT <include refid="BaseColumns"/> FROM media_server_config WHERE name = #{name} LIMIT 1
+    </select>
+    <select id="selectAll" resultMap="BaseResultMap">
+        SELECT <include refid="BaseColumns"/> FROM media_server_config ORDER BY created_at DESC
+    </select>
+    <select id="selectActive" resultMap="BaseResultMap">
+        SELECT <include refid="BaseColumns"/> FROM media_server_config WHERE is_active = 1 ORDER BY name
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO media_server_config(name, server_type, api_base_url, api_key, is_active)
+        VALUES(#{name}, #{serverType}, #{apiBaseUrl}, #{apiKey}, #{isActive})
+    </insert>
+
+    <update id="updateById">
+        UPDATE media_server_config
+        SET name = #{name}, server_type = #{serverType}, api_base_url = #{apiBaseUrl},
+            api_key = #{apiKey}, is_active = #{isActive}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM media_server_config WHERE id = #{id}
+    </delete>
+</mapper>

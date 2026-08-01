@@ -2,8 +2,11 @@ package com.hienao.openlist2strm.service;
 
 import com.hienao.openlist2strm.config.PathConfiguration;
 import com.hienao.openlist2strm.entity.MediaLibraryType;
+import com.hienao.openlist2strm.entity.MediaRefreshScope;
+import com.hienao.openlist2strm.entity.MediaServerConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
+import com.hienao.openlist2strm.mapper.MediaServerConfigMapper;
 import com.hienao.openlist2strm.mapper.TaskConfigMapper;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -30,6 +33,7 @@ public class TaskConfigService {
   private final TaskConfigMapper taskConfigMapper;
   private final QuartzSchedulerService quartzSchedulerService;
   private final PathConfiguration pathConfiguration;
+  private final MediaServerConfigMapper mediaServerConfigMapper;
 
   /**
    * 根据ID查询任务配置
@@ -114,6 +118,7 @@ public class TaskConfigService {
    */
   @Transactional(rollbackFor = Exception.class)
   public TaskConfig createConfig(TaskConfig taskConfig) {
+    setDefaultValues(taskConfig);
     validateConfig(taskConfig);
 
     // 检查任务名称是否已存在
@@ -127,9 +132,6 @@ public class TaskConfigService {
     if (existingPathConfig != null) {
       throw new BusinessException("任务路径已存在: " + taskConfig.getPath());
     }
-
-    // 设置默认值
-    setDefaultValues(taskConfig);
 
     int result = taskConfigMapper.insert(taskConfig);
     if (result <= 0) {
@@ -171,7 +173,20 @@ public class TaskConfigService {
     if (!StringUtils.hasText(taskConfig.getLibraryType())) {
       taskConfig.setLibraryType(existingConfig.getLibraryType());
     }
+    if (taskConfig.getNeedScrap() == null) {
+      taskConfig.setNeedScrap(existingConfig.getNeedScrap());
+    }
+    if (taskConfig.getAutoRenameMedia() == null) {
+      taskConfig.setAutoRenameMedia(existingConfig.getAutoRenameMedia());
+    }
+    if (taskConfig.getMediaRefreshScope() == null) {
+      taskConfig.setMediaRefreshScope(existingConfig.getMediaRefreshScope());
+      taskConfig.setMediaServerConfigId(existingConfig.getMediaServerConfigId());
+      taskConfig.setMediaLibraryId(existingConfig.getMediaLibraryId());
+      taskConfig.setMediaLibraryName(existingConfig.getMediaLibraryName());
+    }
     normalizeLibraryType(taskConfig);
+    normalizeMediaRefresh(taskConfig);
 
     // 如果更新了任务名称，检查是否与其他配置冲突
     if (StringUtils.hasText(taskConfig.getTaskName())
@@ -367,6 +382,7 @@ public class TaskConfigService {
       throw new BusinessException("任务路径不能为空");
     }
     normalizeLibraryType(taskConfig);
+    normalizeMediaRefresh(taskConfig);
 
     // 验证cron表达式格式（如果提供了的话）
     if (StringUtils.hasText(taskConfig.getCron())) {
@@ -391,6 +407,14 @@ public class TaskConfigService {
     if (taskConfig.getRenameRegex() == null) {
       taskConfig.setRenameRegex("");
     }
+    if (taskConfig.getAutoRenameMedia() == null) {
+      taskConfig.setAutoRenameMedia(false);
+    }
+    normalizeAutoRename(taskConfig);
+    if (taskConfig.getMediaRefreshScope() == null) {
+      taskConfig.setMediaRefreshScope(MediaRefreshScope.NONE.name());
+    }
+    normalizeMediaRefresh(taskConfig);
     if (taskConfig.getCron() == null) {
       taskConfig.setCron("");
     }
@@ -415,8 +439,49 @@ public class TaskConfigService {
       if (libraryType == MediaLibraryType.AUTO) {
         taskConfig.setSkipInvalidStructure(false);
       }
+      normalizeAutoRename(taskConfig);
     } catch (IllegalArgumentException e) {
       throw new BusinessException(e.getMessage());
     }
+  }
+
+  private void normalizeAutoRename(TaskConfig taskConfig) {
+    if (!Boolean.TRUE.equals(taskConfig.getNeedScrap())
+        || MediaLibraryType.from(taskConfig.getLibraryType()) == MediaLibraryType.AUTO) {
+      taskConfig.setAutoRenameMedia(false);
+    }
+  }
+
+  private void normalizeMediaRefresh(TaskConfig taskConfig) {
+    MediaRefreshScope scope = MediaRefreshScope.from(taskConfig.getMediaRefreshScope());
+    taskConfig.setMediaRefreshScope(scope.name());
+    if (scope == MediaRefreshScope.NONE) {
+      taskConfig.setMediaServerConfigId(null);
+      taskConfig.setMediaLibraryId(null);
+      taskConfig.setMediaLibraryName(null);
+      return;
+    }
+    if (taskConfig.getMediaServerConfigId() == null) {
+      throw new BusinessException("请选择需要刷新的媒体服务器");
+    }
+    MediaServerConfig server =
+        mediaServerConfigMapper.selectById(taskConfig.getMediaServerConfigId());
+    if (server == null) {
+      throw new BusinessException("选择的媒体服务器不存在");
+    }
+    if (!Boolean.TRUE.equals(server.getIsActive())) {
+      throw new BusinessException("选择的媒体服务器已停用，请重新选择或关闭刷新");
+    }
+    if (scope == MediaRefreshScope.ALL) {
+      taskConfig.setMediaLibraryId(null);
+      taskConfig.setMediaLibraryName(null);
+      return;
+    }
+    if (!StringUtils.hasText(taskConfig.getMediaLibraryId())
+        || !StringUtils.hasText(taskConfig.getMediaLibraryName())) {
+      throw new BusinessException("请选择需要精确刷新的媒体库");
+    }
+    taskConfig.setMediaLibraryId(taskConfig.getMediaLibraryId().trim());
+    taskConfig.setMediaLibraryName(taskConfig.getMediaLibraryName().trim());
   }
 }

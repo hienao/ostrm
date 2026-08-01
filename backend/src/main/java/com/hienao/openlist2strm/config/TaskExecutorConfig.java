@@ -64,4 +64,18 @@ public class TaskExecutorConfig {
     executor.initialize();
     return executor;
   }
+
+  /** 通知投递独立于任务线程，Apprise 不可用时不阻塞后续任务。 */
+  @Bean("notificationExecutor")
+  public Executor notificationExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(1);
+    executor.setMaxPoolSize(2);
+    executor.setQueueCapacity(200);
+    executor.setThreadNamePrefix("notification-");
+    executor.setRejectedExecutionHandler(new ThreadPoolExecutor.DiscardPolicy());
+    executor.setWaitForTasksToCompleteOnShutdown(false);
+    executor.initialize();
+    return executor;
+  }
 }

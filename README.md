@@ -26,6 +26,8 @@ OStrm 是一个面向 OpenList 影音库的自托管 Web 应用。它扫描远�
 - **自动生成**：按 OpenList 原有目录结构输出 STRM 文件
 - **智能整理**：可选 TMDB 刮削与 AI 文件名识别，补齐 NFO 和图片
 - **持续更新**：支持 Cron 定时、增量更新、全量更新与孤立文件清理
+- **媒体库联动**：任务完成后可通知 Emby 或 Jellyfin 刷新全部或指定媒体库
+- **结果通知**：通过 Apprise 将任务、手动刮削和媒体库刷新结果发送到多个渠道
 - **灵活适配**：支持 Base URL 替换、URL 编码控制和多个 OpenList 配置
 - **可视管理**：在 Web 界面创建任务、查看进度、筛选日志
 - **便于部署**：Docker Compose 一次启动，数据与输出目录持久化
@@ -104,6 +106,8 @@ docker compose up -d
 | TMDB / AI 刮削 | 规范媒体名称，生成 NFO、海报和背景图 | [AI 识别配置](https://ostrm.51cloud.de/ai-recognition-config.html) |
 | STRM Base URL | 为媒体服务器改写 STRM 中的访问地址 | [Base URL 配置](https://ostrm.51cloud.de/strm-base-url-config.html) |
 | URL 编码控制 | 处理中文路径、空格和特殊字符 | [URL 编码配置](https://ostrm.51cloud.de/url-encoding-config.html) |
+| Emby / Jellyfin 刷新 | STRM 生成后刷新全部媒体库，或按媒体库 ID 精确刷新 | 在“系统设置”添加服务器，再在任务中选择刷新范围 |
+| Apprise 通知 | 推送任务与手动刮削终态、失败分类和完整路径 | 在“系统设置 → 任务通知”中配置 |
 | 日志与排错 | 查看任务处理链和失败原因 | [日志说明](https://ostrm.51cloud.de/log.html) |
 
 ## 技术组成

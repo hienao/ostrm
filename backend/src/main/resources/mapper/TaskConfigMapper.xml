@@ -12,6 +12,11 @@
         <result column="library_type" property="libraryType" jdbcType="VARCHAR"/>
         <result column="skip_invalid_structure" property="skipInvalidStructure" jdbcType="BOOLEAN"/>
         <result column="rename_regex" property="renameRegex" jdbcType="VARCHAR"/>
+        <result column="auto_rename_media" property="autoRenameMedia" jdbcType="BOOLEAN"/>
+        <result column="media_server_config_id" property="mediaServerConfigId" jdbcType="BIGINT"/>
+        <result column="media_refresh_scope" property="mediaRefreshScope" jdbcType="VARCHAR"/>
+        <result column="media_library_id" property="mediaLibraryId" jdbcType="VARCHAR"/>
+        <result column="media_library_name" property="mediaLibraryName" jdbcType="VARCHAR"/>
         <result column="cron" property="cron" jdbcType="VARCHAR"/>
         <result column="is_increment" property="isIncrement" jdbcType="BOOLEAN"/>
         <result column="strm_path" property="strmPath" jdbcType="VARCHAR"/>
@@ -23,7 +28,7 @@
 
     <!-- 基础字段 -->
     <sql id="Base_Column_List">
-        id, task_name, path, openlist_config_id, need_scrap, library_type, skip_invalid_structure, rename_regex, cron, is_increment, strm_path, last_exec_time, created_at, updated_at, is_active
+        id, task_name, path, openlist_config_id, need_scrap, library_type, skip_invalid_structure, rename_regex, auto_rename_media, media_server_config_id, media_refresh_scope, media_library_id, media_library_name, cron, is_increment, strm_path, last_exec_time, created_at, updated_at, is_active
     </sql>
 
     <!-- 根据ID查询 -->
@@ -78,6 +83,13 @@
         ORDER BY created_at DESC
     </select>
 
+    <select id="selectByMediaServerConfigId" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM task_config
+        WHERE media_server_config_id = #{mediaServerConfigId}
+        ORDER BY task_name
+    </select>
+
     <!-- 插入任务配置 -->
     <insert id="insert" parameterType="com.hienao.openlist2strm.entity.TaskConfig" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO task_config
@@ -103,6 +115,13 @@
             <if test="renameRegex != null">
                 rename_regex,
             </if>
+            <if test="autoRenameMedia != null">
+                auto_rename_media,
+            </if>
+            media_server_config_id,
+            media_refresh_scope,
+            media_library_id,
+            media_library_name,
             <if test="cron != null">
                 cron,
             </if>
@@ -141,6 +160,13 @@
             <if test="renameRegex != null">
                 #{renameRegex},
             </if>
+            <if test="autoRenameMedia != null">
+                #{autoRenameMedia},
+            </if>
+            #{mediaServerConfigId},
+            #{mediaRefreshScope},
+            #{mediaLibraryId},
+            #{mediaLibraryName},
             <if test="cron != null">
                 #{cron},
             </if>
@@ -184,6 +210,13 @@
             <if test="renameRegex != null">
                 rename_regex = #{renameRegex},
             </if>
+            <if test="autoRenameMedia != null">
+                auto_rename_media = #{autoRenameMedia},
+            </if>
+            media_server_config_id = #{mediaServerConfigId},
+            media_refresh_scope = #{mediaRefreshScope},
+            media_library_id = #{mediaLibraryId},
+            media_library_name = #{mediaLibraryName},
             <if test="cron != null">
                 cron = #{cron},
             </if>
