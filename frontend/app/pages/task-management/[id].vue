@@ -211,8 +211,11 @@
     <Teleport to="body">
       <div v-if="showCreateTaskModal || showEditTaskModal" class="modal-overlay animate-fade-in">
         <div class="flex items-center justify-center min-h-screen p-4">
-          <div class="modal-content animate-scale-in w-full max-w-lg" @click.stop>
-            <div class="flex items-center justify-between mb-6">
+          <div
+            class="modal-content animate-scale-in mx-0 flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden p-0"
+            @click.stop
+          >
+            <div class="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-4 sm:px-6">
               <h3 class="text-xl font-semibold text-white">
                 {{ showCreateTaskModal ? '创建任务' : '编辑任务' }}
               </h3>
@@ -223,7 +226,8 @@
               </button>
             </div>
 
-            <form @submit.prevent="submitTask" class="space-y-5">
+            <form @submit.prevent="submitTask" class="flex min-h-0 flex-1 flex-col">
+              <div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6">
               <div>
                 <label class="block text-sm text-white/70 mb-2">任务名称 *</label>
                 <input v-model="taskForm.taskName" type="text" required class="input-field" placeholder="请输入任务名称">
@@ -403,8 +407,9 @@
                   <span class="ml-2 text-sm text-white/70">启用任务</span>
                 </label>
               </div>
+              </div>
 
-              <div class="flex justify-end gap-3 pt-4">
+              <div class="flex shrink-0 justify-end gap-3 border-t border-white/10 bg-[#0A0A0F] px-4 py-4 sm:px-6">
                 <button type="button" @click="closeModal" class="btn-secondary">取消</button>
                 <button type="submit" :disabled="submitting" class="btn-primary">
                   <svg v-if="submitting" class="loading-spinner -ml-1 mr-2 w-4 h-4" fill="none" viewBox="0 0 24 24">

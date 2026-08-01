@@ -16,6 +16,7 @@ public record NotificationIssue(
 
   public enum Category {
     SCRAPE_UNRECOGNIZED,
+    STRUCTURE_INVALID_SKIPPED,
     DIRECTORY_RENAME_FAILED,
     FILE_RENAME_FAILED,
     PROCESSING_FAILED,

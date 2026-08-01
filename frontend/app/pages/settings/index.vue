@@ -340,9 +340,9 @@
                 <input id="appriseServerUrl" v-model="notificationConfig.serverUrl" type="url" class="input-field" placeholder="http://apprise:8000" />
               </div>
               <div>
-                <label for="appriseConfigKey" class="block text-sm text-white/70 mb-2">配置 Key</label>
+                <label for="appriseConfigKey" class="block text-sm text-white/70 mb-2">Config ID</label>
                 <input id="appriseConfigKey" v-model="notificationConfig.configKey" type="text" class="input-field" placeholder="ostrm" />
-                <p class="mt-1 text-xs text-white/30">对应 Apprise API 中保存的配置标识</p>
+                <p class="mt-1 text-xs text-white/30">对应 Apprise API 中保存的 Config ID</p>
               </div>
               <div>
                 <label for="appriseTags" class="block text-sm text-white/70 mb-2">通知标签</label>
@@ -738,7 +738,7 @@ const testAiConfig = async () => {
 
 const testNotification = async () => {
   if (!notificationConfig.value.serverUrl || !notificationConfig.value.configKey) {
-    notificationTestResult.value = { success: false, message: '请填写 Apprise 服务地址和配置 Key' }
+    notificationTestResult.value = { success: false, message: '请填写 Apprise 服务地址和 Config ID' }
     return
   }
   testingNotification.value = true

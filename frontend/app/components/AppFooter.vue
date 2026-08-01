@@ -31,6 +31,18 @@
         <!-- 右侧链接 -->
         <div class="flex items-center gap-6">
           <a
+            href="https://t.me/ostrm6"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex items-center gap-1.5 text-sm text-white/40 hover:text-sky-400 transition-colors"
+            title="加入 Telegram 群组 @ostrm6"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21.75 3.75 10.5 15m11.25-11.25-7.2 16.2-4.05-4.95-6.45-2.7 17.7-8.55Z" />
+            </svg>
+            <span class="hidden sm:inline">@ostrm6</span>
+          </a>
+          <a
             href="https://github.com/hienao/ostrm"
             target="_blank"
             rel="noopener noreferrer"

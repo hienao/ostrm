@@ -376,6 +376,16 @@ public class TaskExecutionService {
             .toList();
     StructureFilterResult structureFilter =
         filterVideoFilesByStructure(taskConfig, discoveredVideoFiles);
+    structureFilter
+        .skippedVideoReasons()
+        .forEach(
+            (path, reason) ->
+                notificationIssues.add(
+                    NotificationIssue.builder()
+                        .category(NotificationIssue.Category.STRUCTURE_INVALID_SKIPPED)
+                        .sourcePath(path)
+                        .reason(reason)
+                        .build()));
     List<OpenlistApiService.OpenlistFile> allVideoFiles = structureFilter.eligibleVideoFiles();
     List<OpenlistApiService.OpenlistFile> effectiveFiles =
         structureFilter.skippedVideoPaths().isEmpty()
@@ -505,8 +515,12 @@ public class TaskExecutionService {
     } else {
       log.warn("本轮有 {} 个视频处理失败，不更新增量清单", failedCount);
     }
+    boolean hasFailureIssue =
+        notificationIssues.stream()
+            .anyMatch(
+                issue -> issue.category() != NotificationIssue.Category.STRUCTURE_INVALID_SKIPPED);
     NotificationEvent.Status status =
-        failedCount > 0 || !notificationIssues.isEmpty()
+        failedCount > 0 || hasFailureIssue
             ? NotificationEvent.Status.PARTIAL_SUCCESS
             : NotificationEvent.Status.SUCCESS;
     return NotificationEvent.builder()
@@ -714,17 +728,18 @@ public class TaskExecutionService {
   StructureFilterResult filterVideoFilesByStructure(
       TaskConfig taskConfig, List<OpenlistApiService.OpenlistFile> videoFiles) {
     if (!Boolean.TRUE.equals(taskConfig.getSkipInvalidStructure()) || videoFiles.isEmpty()) {
-      return new StructureFilterResult(videoFiles, Set.of());
+      return new StructureFilterResult(videoFiles, Set.of(), Map.of());
     }
 
     MediaLibraryType libraryType = MediaLibraryType.from(taskConfig.getLibraryType());
     if (libraryType == MediaLibraryType.AUTO) {
       log.info("任务已启用目录结构过滤，但自动识别类型没有固定结构，跳过过滤: {}", taskConfig.getTaskName());
-      return new StructureFilterResult(videoFiles, Set.of());
+      return new StructureFilterResult(videoFiles, Set.of(), Map.of());
     }
 
     List<OpenlistApiService.OpenlistFile> eligibleFiles = new ArrayList<>();
     java.util.LinkedHashSet<String> skippedPaths = new java.util.LinkedHashSet<>();
+    Map<String, String> skippedReasons = new java.util.LinkedHashMap<>();
     Map<String, Integer> reasonCounts = new java.util.LinkedHashMap<>();
     for (OpenlistApiService.OpenlistFile file : videoFiles) {
       String relativePath =
@@ -737,6 +752,7 @@ public class TaskExecutionService {
         continue;
       }
       skippedPaths.add(file.getPath());
+      skippedReasons.put(file.getPath(), reason.get());
       reasonCounts.merge(reason.get(), 1, Integer::sum);
       if (skippedPaths.size() <= MAX_INVALID_STRUCTURE_LOGS) {
         log.warn("跳过目录结构不符合要求的视频: {}, 原因: {}", file.getPath(), reason.get());
@@ -756,11 +772,16 @@ public class TaskExecutionService {
         eligibleFiles.size(),
         skippedPaths.size(),
         reasonCounts);
-    return new StructureFilterResult(List.copyOf(eligibleFiles), Set.copyOf(skippedPaths));
+    return new StructureFilterResult(
+        List.copyOf(eligibleFiles),
+        Set.copyOf(skippedPaths),
+        java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(skippedReasons)));
   }
 
   record StructureFilterResult(
-      List<OpenlistApiService.OpenlistFile> eligibleVideoFiles, Set<String> skippedVideoPaths) {}
+      List<OpenlistApiService.OpenlistFile> eligibleVideoFiles,
+      Set<String> skippedVideoPaths,
+      Map<String, String> skippedVideoReasons) {}
 
   /** 移除文件扩展名 */
   private String removeExtension(String fileName) {
