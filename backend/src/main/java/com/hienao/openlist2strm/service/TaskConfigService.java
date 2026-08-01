@@ -171,6 +171,12 @@ public class TaskConfigService {
     if (!StringUtils.hasText(taskConfig.getLibraryType())) {
       taskConfig.setLibraryType(existingConfig.getLibraryType());
     }
+    if (taskConfig.getNeedScrap() == null) {
+      taskConfig.setNeedScrap(existingConfig.getNeedScrap());
+    }
+    if (taskConfig.getAutoRenameMedia() == null) {
+      taskConfig.setAutoRenameMedia(existingConfig.getAutoRenameMedia());
+    }
     normalizeLibraryType(taskConfig);
 
     // 如果更新了任务名称，检查是否与其他配置冲突
@@ -391,6 +397,10 @@ public class TaskConfigService {
     if (taskConfig.getRenameRegex() == null) {
       taskConfig.setRenameRegex("");
     }
+    if (taskConfig.getAutoRenameMedia() == null) {
+      taskConfig.setAutoRenameMedia(false);
+    }
+    normalizeAutoRename(taskConfig);
     if (taskConfig.getCron() == null) {
       taskConfig.setCron("");
     }
@@ -415,8 +425,16 @@ public class TaskConfigService {
       if (libraryType == MediaLibraryType.AUTO) {
         taskConfig.setSkipInvalidStructure(false);
       }
+      normalizeAutoRename(taskConfig);
     } catch (IllegalArgumentException e) {
       throw new BusinessException(e.getMessage());
+    }
+  }
+
+  private void normalizeAutoRename(TaskConfig taskConfig) {
+    if (!Boolean.TRUE.equals(taskConfig.getNeedScrap())
+        || MediaLibraryType.from(taskConfig.getLibraryType()) == MediaLibraryType.AUTO) {
+      taskConfig.setAutoRenameMedia(false);
     }
   }
 }

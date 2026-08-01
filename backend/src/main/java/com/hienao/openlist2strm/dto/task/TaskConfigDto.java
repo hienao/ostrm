@@ -46,6 +46,9 @@ public class TaskConfigDto {
   /** 重命名正则表达式，为空时表示不需要重命名 */
   @Size(max = 500, message = "重命名正则表达式长度不能超过500个字符") private String renameRegex;
 
+  /** 普通任务执行时是否根据刮削结果自动重命名 OpenList 媒体 */
+  private Boolean autoRenameMedia;
+
   /** 定时任务表达式 */
   @Size(max = 100, message = "定时任务表达式长度不能超过100个字符") @ValidCronExpression(message = "定时任务表达式格式不正确")
   private String cron;

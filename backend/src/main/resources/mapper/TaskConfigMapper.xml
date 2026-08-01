@@ -12,6 +12,7 @@
         <result column="library_type" property="libraryType" jdbcType="VARCHAR"/>
         <result column="skip_invalid_structure" property="skipInvalidStructure" jdbcType="BOOLEAN"/>
         <result column="rename_regex" property="renameRegex" jdbcType="VARCHAR"/>
+        <result column="auto_rename_media" property="autoRenameMedia" jdbcType="BOOLEAN"/>
         <result column="cron" property="cron" jdbcType="VARCHAR"/>
         <result column="is_increment" property="isIncrement" jdbcType="BOOLEAN"/>
         <result column="strm_path" property="strmPath" jdbcType="VARCHAR"/>
@@ -23,7 +24,7 @@
 
     <!-- 基础字段 -->
     <sql id="Base_Column_List">
-        id, task_name, path, openlist_config_id, need_scrap, library_type, skip_invalid_structure, rename_regex, cron, is_increment, strm_path, last_exec_time, created_at, updated_at, is_active
+        id, task_name, path, openlist_config_id, need_scrap, library_type, skip_invalid_structure, rename_regex, auto_rename_media, cron, is_increment, strm_path, last_exec_time, created_at, updated_at, is_active
     </sql>
 
     <!-- 根据ID查询 -->
@@ -103,6 +104,9 @@
             <if test="renameRegex != null">
                 rename_regex,
             </if>
+            <if test="autoRenameMedia != null">
+                auto_rename_media,
+            </if>
             <if test="cron != null">
                 cron,
             </if>
@@ -140,6 +144,9 @@
             </if>
             <if test="renameRegex != null">
                 #{renameRegex},
+            </if>
+            <if test="autoRenameMedia != null">
+                #{autoRenameMedia},
             </if>
             <if test="cron != null">
                 #{cron},
@@ -183,6 +190,9 @@
             </if>
             <if test="renameRegex != null">
                 rename_regex = #{renameRegex},
+            </if>
+            <if test="autoRenameMedia != null">
+                auto_rename_media = #{autoRenameMedia},
             </if>
             <if test="cron != null">
                 cron = #{cron},

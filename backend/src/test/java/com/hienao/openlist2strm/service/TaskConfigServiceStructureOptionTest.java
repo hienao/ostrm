@@ -32,6 +32,7 @@ class TaskConfigServiceStructureOptionTest {
     service.createConfig(task);
 
     assertFalse(task.getSkipInvalidStructure());
+    assertFalse(task.getAutoRenameMedia());
   }
 
   @Test
@@ -41,6 +42,28 @@ class TaskConfigServiceStructureOptionTest {
     service.createConfig(task);
 
     assertFalse(task.getSkipInvalidStructure());
+  }
+
+  @Test
+  void automaticRenameRequiresScrapingAndExplicitLibraryType() {
+    TaskConfig scrapingDisabled =
+        baseTask().setLibraryType("movie").setNeedScrap(false).setAutoRenameMedia(true);
+
+    service.createConfig(scrapingDisabled);
+
+    assertFalse(scrapingDisabled.getAutoRenameMedia());
+
+    TaskConfig automaticType =
+        baseTask()
+            .setTaskName("自动类型")
+            .setPath("/auto")
+            .setLibraryType("auto")
+            .setNeedScrap(true)
+            .setAutoRenameMedia(true);
+
+    service.createConfig(automaticType);
+
+    assertFalse(automaticType.getAutoRenameMedia());
   }
 
   private TaskConfig baseTask() {

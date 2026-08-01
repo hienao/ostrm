@@ -195,6 +195,34 @@ class ManualScrapingServiceTest {
   }
 
   @Test
+  void taskExecutionAutoRenameOnlyRenamesMedia() {
+    stubMovieTask();
+    OpenlistConfig config = openlistConfigService.getById(3L);
+    String directory = "/movies/Film (2026) {tmdbid-123}";
+    when(openlistApiService.getAllFilesRecursively(config, directory))
+        .thenReturn(List.of(entry("raw.mkv", directory + "/raw.mkv", "file")));
+    when(openlistApiService.getDirectoryContents(config, "/movies"))
+        .thenReturn(List.of(entry(lastSegment(directory), directory, "folder")));
+    when(strmFileService.isVideoFile("raw.mkv")).thenReturn(true);
+    TmdbMovieDetail detail = new TmdbMovieDetail();
+    detail.setId(123);
+    detail.setTitle("Film");
+    detail.setReleaseDate("2026-01-01");
+    when(tmdbApiService.getMovieDetail(123)).thenReturn(detail);
+
+    var result = service.autoRenameForTaskExecution(7L, directory);
+
+    verify(openlistApiService)
+        .renameEntry(config, directory + "/raw.mkv", "Film (2026) {tmdbid-123}.mkv");
+    verify(openlistApiService, never())
+        .uploadFile(
+            eq(config), anyString(), org.mockito.ArgumentMatchers.any(Path.class), anyString());
+    assertTrue(result.matched());
+    assertEquals(0, result.renamedDirectoryCount());
+    assertEquals(1, result.renamedFileCount());
+  }
+
+  @Test
   void previewsCanonicalSeasonDirectoryNames() {
     stubTvDirectory();
     TmdbTvDetail detail = tvDetail();

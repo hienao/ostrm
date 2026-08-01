@@ -22,10 +22,14 @@ import com.hienao.openlist2strm.entity.MediaLibraryType;
 import com.hienao.openlist2strm.entity.OpenlistConfig;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
+import com.hienao.openlist2strm.exception.RenameOperationException;
 import com.hienao.openlist2strm.handler.FileProcessorChain;
 import com.hienao.openlist2strm.handler.ProcessingResult;
 import com.hienao.openlist2strm.handler.context.FileProcessingContext;
 import com.hienao.openlist2strm.handler.context.TaskScrapingSession;
+import com.hienao.openlist2strm.notification.NotificationEvent;
+import com.hienao.openlist2strm.notification.NotificationIssue;
+import com.hienao.openlist2strm.notification.ScrapeOutcome;
 import com.hienao.openlist2strm.util.TaskDirectoryStructureValidator;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -62,6 +66,8 @@ public class TaskExecutionService {
   private final MediaScrapingService mediaScrapingService;
   private final SystemConfigService systemConfigService;
   private final TaskManifestService taskManifestService;
+  private final ManualScrapingService manualScrapingService;
+  private final NotificationService notificationService;
   private final FileProcessorChain fileProcessorChain;
   private final Executor taskSubmitExecutor;
   private final Object taskSubmissionLock = new Object();
@@ -74,7 +80,11 @@ public class TaskExecutionService {
    * @param isIncrement 是否增量执行（可选参数）
    */
   public void submitTask(Long taskId, Boolean isIncrement) {
-    scheduleTask(taskId, isIncrement);
+    scheduleTask(taskId, isIncrement, NotificationEvent.Trigger.MANUAL);
+  }
+
+  public void submitScheduledTask(Long taskId, Boolean isIncrement) {
+    scheduleTask(taskId, isIncrement, NotificationEvent.Trigger.SCHEDULED);
   }
 
   /**
@@ -83,7 +93,11 @@ public class TaskExecutionService {
    * @param taskId 任务ID
    * @param isIncrement 是否增量执行（可选参数）
    */
-  private void executeTaskSync(Long taskId, Boolean isIncrement) {
+  private void executeTaskSync(
+      Long taskId, Boolean isIncrement, NotificationEvent.Trigger trigger) {
+    long startedNanos = System.nanoTime();
+    TaskConfig taskConfig = null;
+    boolean useIncrement = false;
     try {
       log.info(
           "开始执行任务 - 任务ID: {}, 增量模式: {}, 线程: {}",
@@ -92,7 +106,7 @@ public class TaskExecutionService {
           Thread.currentThread().getName());
 
       // 获取任务配置
-      TaskConfig taskConfig = taskConfigService.getById(taskId);
+      taskConfig = taskConfigService.getById(taskId);
       if (taskConfig == null) {
         throw new BusinessException("任务配置不存在，ID: " + taskId);
       }
@@ -103,7 +117,6 @@ public class TaskExecutionService {
       }
 
       // 确定是否使用增量模式
-      boolean useIncrement;
       if (isIncrement != null) {
         // 如果传了参数，以传参为主
         useIncrement = isIncrement;
@@ -118,14 +131,45 @@ public class TaskExecutionService {
       taskConfigService.updateLastExecTime(taskId, LocalDateTime.now());
 
       // 执行具体的任务逻辑
-      executeTaskLogic(taskConfig, useIncrement);
+      NotificationEvent event = executeTaskLogic(taskConfig, useIncrement);
+      event.setTrigger(trigger);
+      event.setDurationMillis(elapsedMillis(startedNanos));
+      event.setCompletedAt(LocalDateTime.now());
+      notifySafely(event);
 
       log.info(
           "任务执行完成 - 任务ID: {}, 任务名称: {}, 增量模式: {}", taskId, taskConfig.getTaskName(), useIncrement);
 
     } catch (Exception e) {
       log.error("任务执行失败 - 任务ID: {}, 错误信息: {}", taskId, e.getMessage(), e);
+      if (taskConfig != null) {
+        notifySafely(
+            NotificationEvent.builder()
+                .kind(NotificationEvent.Kind.TASK)
+                .status(NotificationEvent.Status.FAILURE)
+                .trigger(trigger)
+                .taskId(taskConfig.getId())
+                .taskName(taskConfig.getTaskName())
+                .executionMode(useIncrement ? "增量" : "全量")
+                .libraryType(taskConfig.getLibraryType())
+                .sourcePath(taskConfig.getPath())
+                .strmPath(taskConfig.getStrmPath())
+                .failedStage(failureStage(e))
+                .errorMessage(rootMessage(e))
+                .durationMillis(elapsedMillis(startedNanos))
+                .completedAt(LocalDateTime.now())
+                .build());
+      }
       throw new BusinessException("任务执行失败: " + e.getMessage(), e);
+    }
+  }
+
+  private void notifySafely(NotificationEvent event) {
+    try {
+      notificationService.notifyAsync(event);
+    } catch (Exception e) {
+      // 通知是附加能力，不得因配置、渲染或线程池异常改变任务结果。
+      log.error("提交任务通知失败 - 任务ID: {}", event.getTaskId(), e);
     }
   }
 
@@ -137,10 +181,11 @@ public class TaskExecutionService {
    * @return CompletableFuture<Void>
    */
   public CompletableFuture<Void> executeTask(Long taskId, Boolean isIncrement) {
-    return scheduleTask(taskId, isIncrement);
+    return scheduleTask(taskId, isIncrement, NotificationEvent.Trigger.MANUAL);
   }
 
-  private CompletableFuture<Void> scheduleTask(Long taskId, Boolean isIncrement) {
+  private CompletableFuture<Void> scheduleTask(
+      Long taskId, Boolean isIncrement, NotificationEvent.Trigger trigger) {
     synchronized (taskSubmissionLock) {
       CompletableFuture<Void> existing = activeTasks.get(taskId);
       if (existing != null && !existing.isDone()) {
@@ -154,7 +199,7 @@ public class TaskExecutionService {
         taskSubmitExecutor.execute(
             () -> {
               try {
-                executeTaskSync(taskId, isIncrement);
+                executeTaskSync(taskId, isIncrement, trigger);
                 future.complete(null);
               } catch (Exception e) {
                 future.completeExceptionally(e);
@@ -179,7 +224,7 @@ public class TaskExecutionService {
    * @param taskConfig 任务配置
    * @param isIncrement 是否增量执行
    */
-  private void executeTaskLogic(TaskConfig taskConfig, boolean isIncrement) {
+  private NotificationEvent executeTaskLogic(TaskConfig taskConfig, boolean isIncrement) {
     log.info("开始执行任务逻辑: {}, 增量模式: {}", taskConfig.getTaskName(), isIncrement);
 
     try {
@@ -188,7 +233,7 @@ public class TaskExecutionService {
 
       // 2. 使用 Handler 链处理方式执行任务
       log.info("使用 Handler 链处理方式执行任务");
-      executeTaskWithHandlerChain(taskConfig, openlistConfig, isIncrement);
+      return executeTaskWithHandlerChain(taskConfig, openlistConfig, isIncrement);
 
     } catch (Exception e) {
       log.error("任务执行失败: {}, 错误: {}", taskConfig.getTaskName(), e.getMessage(), e);
@@ -197,8 +242,12 @@ public class TaskExecutionService {
   }
 
   /** 使用 Handler 链执行任务（新方式） */
-  private void executeTaskWithHandlerChain(
+  private NotificationEvent executeTaskWithHandlerChain(
       TaskConfig taskConfig, OpenlistConfig openlistConfig, boolean isIncrement) {
+
+    List<NotificationIssue> notificationIssues = new ArrayList<>();
+    int renamedDirectoryCount = 0;
+    int renamedFileCount = 0;
 
     // 1. 先获取目录文件列表（在清空目录之前验证 OpenList API 可用性）
     List<OpenlistApiService.OpenlistFile> allFiles;
@@ -212,11 +261,65 @@ public class TaskExecutionService {
               directoryReadConcurrency(openlistConfig));
     } catch (Exception e) {
       log.error("获取 OpenList 文件列表失败，终止任务执行，STRM 目录未受影响: {}", e.getMessage(), e);
-      throw new BusinessException("获取 OpenList 文件列表失败，任务终止: " + e.getMessage(), e);
+      throw new TaskStageException("DISCOVERY", "获取 OpenList 文件列表失败，任务终止: " + e.getMessage(), e);
     }
 
     // 2. 验证文件列表有效性（空列表也继续执行，可能该路径下确实没有文件）
     log.info("成功获取 OpenList 文件列表，共 {} 个文件/目录", allFiles.size());
+
+    // 普通任务的自动重命名必须先于 STRM 生成；完成后重新读取清单，确保 URL 和相对路径都是最新值。
+    if (shouldAutoRename(taskConfig)) {
+      List<String> mediaDirectories = autoRenameDirectories(taskConfig, allFiles);
+      int skippedDirectories = 0;
+      for (String mediaDirectory : mediaDirectories) {
+        try {
+          ManualScrapingService.AutoRenameResult result =
+              manualScrapingService.autoRenameForTaskExecution(taskConfig.getId(), mediaDirectory);
+          renamedDirectoryCount += result.renamedDirectoryCount();
+          renamedFileCount += result.renamedFileCount();
+          if (result.issue() != null) {
+            notificationIssues.add(result.issue());
+          }
+          if (!result.matched()) {
+            skippedDirectories++;
+            log.warn("自动重命名跳过目录: {}, 原因: {}", mediaDirectory, result.message());
+          }
+        } catch (RenameOperationException e) {
+          skippedDirectories++;
+          notificationIssues.add(e.getIssue());
+          log.warn("自动重命名目录失败，保留原名称继续执行: {}, 错误: {}", mediaDirectory, e.getMessage());
+        } catch (Exception e) {
+          skippedDirectories++;
+          notificationIssues.add(
+              NotificationIssue.builder()
+                  .category(NotificationIssue.Category.PROCESSING_FAILED)
+                  .scope("自动重命名")
+                  .sourcePath(mediaDirectory)
+                  .reason(rootMessage(e))
+                  .build());
+          log.warn("自动重命名目录失败，保留原名称继续执行: {}, 错误: {}", mediaDirectory, e.getMessage());
+        }
+      }
+      if (!mediaDirectories.isEmpty()) {
+        log.info(
+            "自动重命名阶段完成: 媒体目录 {}, 重命名目录 {}, 重命名文件 {}, 跳过 {}",
+            mediaDirectories.size(),
+            renamedDirectoryCount,
+            renamedFileCount,
+            skippedDirectories);
+        try {
+          allFiles =
+              openlistApiService.getAllFilesConcurrently(
+                  openlistConfig,
+                  taskConfig.getPath(),
+                  false,
+                  directoryReadConcurrency(openlistConfig));
+        } catch (Exception e) {
+          throw new TaskStageException(
+              "AUTO_RENAMING", "自动重命名后重新读取 OpenList 文件列表失败: " + e.getMessage(), e);
+        }
+      }
+    }
 
     // 3. 文件列表获取成功后，全量模式下再清空 STRM 目录
     if (!isIncrement) {
@@ -294,6 +397,7 @@ public class TaskExecutionService {
     int processedCount = 0;
     int scrapSkippedCount = 0;
     int failedCount = 0;
+    int strmSucceededCount = 0;
 
     for (OpenlistApiService.OpenlistFile videoFile : videoFiles) {
       // 构建单个文件的上下文
@@ -315,6 +419,29 @@ public class TaskExecutionService {
       if (processingResult == ProcessingResult.FAILED) {
         failedCount++;
       }
+      if (strmFileExists(taskConfig, videoFile)) {
+        strmSucceededCount++;
+      }
+      ScrapeOutcome scrapeOutcome = fileContext.getAttribute("scrapeOutcome");
+      if (scrapeOutcome != null && scrapeOutcome.isUnrecognized()) {
+        notificationIssues.add(scrapeIssue(videoFile, scrapeOutcome));
+      } else if (scrapeOutcome != null && scrapeOutcome.status() == ScrapeOutcome.Status.FAILED) {
+        notificationIssues.add(
+            NotificationIssue.builder()
+                .category(NotificationIssue.Category.PROCESSING_FAILED)
+                .scope("媒体刮削")
+                .sourcePath(videoFile.getPath())
+                .reason(scrapeOutcome.reason())
+                .build());
+      } else if (processingResult == ProcessingResult.FAILED) {
+        notificationIssues.add(
+            NotificationIssue.builder()
+                .category(NotificationIssue.Category.PROCESSING_FAILED)
+                .scope("文件处理")
+                .sourcePath(videoFile.getPath())
+                .reason("一个或多个处理步骤失败，请查看任务日志")
+                .build());
+      }
 
       // 更新统计
       if (fileContext.getStats().getProcessedFiles() > 0) {
@@ -328,9 +455,10 @@ public class TaskExecutionService {
     log.info("Handler 链处理完成: 处理 {} 个视频文件, 跳过 {} 个", processedCount, scrapSkippedCount);
 
     // 8. 增量模式下清理孤立文件
+    int cleanedCount = 0;
     if (isIncrement) {
       log.info("增量执行模式，开始清理孤立的STRM文件");
-      int cleanedCount =
+      cleanedCount =
           strmFileService.cleanOrphanedStrmFiles(
               taskConfig.getStrmPath(),
               effectiveFiles,
@@ -344,6 +472,78 @@ public class TaskExecutionService {
           taskConfig.getId(), taskConfig.getPath(), manifestFingerprint, effectiveFiles);
     } else {
       log.warn("本轮有 {} 个视频处理失败，不更新增量清单", failedCount);
+    }
+    NotificationEvent.Status status =
+        failedCount > 0 || !notificationIssues.isEmpty()
+            ? NotificationEvent.Status.PARTIAL_SUCCESS
+            : NotificationEvent.Status.SUCCESS;
+    return NotificationEvent.builder()
+        .kind(NotificationEvent.Kind.TASK)
+        .status(status)
+        .taskId(taskConfig.getId())
+        .taskName(taskConfig.getTaskName())
+        .executionMode(isIncrement ? "增量" : "全量")
+        .libraryType(taskConfig.getLibraryType())
+        .sourcePath(taskConfig.getPath())
+        .strmPath(taskConfig.getStrmPath())
+        .discoveredVideos(discoveredVideoFiles.size())
+        .selectedVideos(videoFiles.size())
+        .strmSucceeded(strmSucceededCount)
+        .processingFailed(failedCount)
+        .incrementalSkipped(Math.max(0, allVideoFiles.size() - videoFiles.size()))
+        .structureSkipped(structureFilter.skippedVideoPaths().size())
+        .cleanedStrm(cleanedCount)
+        .renamedDirectories(renamedDirectoryCount)
+        .renamedFiles(renamedFileCount)
+        .issues(notificationIssues)
+        .build();
+  }
+
+  private NotificationIssue scrapeIssue(
+      OpenlistApiService.OpenlistFile videoFile, ScrapeOutcome outcome) {
+    return NotificationIssue.builder()
+        .category(NotificationIssue.Category.SCRAPE_UNRECOGNIZED)
+        .reasonCode(outcome.status().name())
+        .sourcePath(videoFile.getPath())
+        .mediaTitle(outcome.mediaTitle())
+        .tmdbId(outcome.tmdbId())
+        .reason(outcome.reason())
+        .build();
+  }
+
+  private long elapsedMillis(long startedNanos) {
+    return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+  }
+
+  private String failureStage(Exception exception) {
+    Throwable current = exception;
+    while (current != null) {
+      if (current instanceof TaskStageException staged) {
+        return staged.stage();
+      }
+      current = current.getCause();
+    }
+    return "PROCESSING";
+  }
+
+  private String rootMessage(Throwable error) {
+    Throwable current = error;
+    while (current.getCause() != null && current.getCause() != current) {
+      current = current.getCause();
+    }
+    return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
+  }
+
+  private static final class TaskStageException extends BusinessException {
+    private final String stage;
+
+    private TaskStageException(String stage, String message, Throwable cause) {
+      super(message, cause);
+      this.stage = stage;
+    }
+
+    private String stage() {
+      return stage;
     }
   }
 
@@ -418,6 +618,39 @@ public class TaskExecutionService {
     return qps != null && qps > 0 ? Math.min(4, qps) : 4;
   }
 
+  private boolean shouldAutoRename(TaskConfig taskConfig) {
+    return Boolean.TRUE.equals(taskConfig.getAutoRenameMedia())
+        && Boolean.TRUE.equals(taskConfig.getNeedScrap())
+        && MediaLibraryType.from(taskConfig.getLibraryType()) != MediaLibraryType.AUTO;
+  }
+
+  List<String> autoRenameDirectories(
+      TaskConfig taskConfig, List<OpenlistApiService.OpenlistFile> files) {
+    MediaLibraryType libraryType = MediaLibraryType.from(taskConfig.getLibraryType());
+    String normalizedRoot = TaskDirectoryStructureValidator.normalizePath(taskConfig.getPath());
+    java.util.Set<String> directories = new java.util.TreeSet<>();
+    for (OpenlistApiService.OpenlistFile file : files) {
+      if (!"file".equals(file.getType()) || !strmFileService.isVideoFile(file.getName())) {
+        continue;
+      }
+      String relativePath =
+          TaskDirectoryStructureValidator.calculateRelativePath(
+              taskConfig.getPath(), file.getPath());
+      if (TaskDirectoryStructureValidator.validate(relativePath, libraryType).isPresent()) {
+        continue;
+      }
+      List<String> segments = TaskDirectoryStructureValidator.splitPath(relativePath);
+      if (segments.size() < 2) {
+        continue;
+      }
+      directories.add(
+          "/".equals(normalizedRoot)
+              ? normalizedRoot + segments.get(0)
+              : normalizedRoot + "/" + segments.get(0));
+    }
+    return List.copyOf(directories);
+  }
+
   private boolean strmFileExists(
       TaskConfig taskConfig, OpenlistApiService.OpenlistFile sourceFile) {
     String relativePath =
@@ -440,6 +673,7 @@ public class TaskExecutionService {
             taskConfig.getNeedScrap(),
             taskConfig.getLibraryType(),
             taskConfig.getSkipInvalidStructure(),
+            taskConfig.getAutoRenameMedia(),
             openlistConfig.getStrmBaseUrl(),
             openlistConfig.getEnableUrlEncoding(),
             systemConfig));

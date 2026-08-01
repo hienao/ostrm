@@ -10,7 +10,10 @@ import com.hienao.openlist2strm.entity.ManualScrapingJob;
 import com.hienao.openlist2strm.entity.ManualScrapingJobStage;
 import com.hienao.openlist2strm.entity.ManualScrapingJobStatus;
 import com.hienao.openlist2strm.exception.BusinessException;
+import com.hienao.openlist2strm.exception.RenameOperationException;
 import com.hienao.openlist2strm.mapper.ManualScrapingJobMapper;
+import com.hienao.openlist2strm.notification.NotificationEvent;
+import com.hienao.openlist2strm.notification.NotificationIssue;
 import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -31,17 +34,20 @@ public class ManualScrapingJobService {
   private final TaskConfigService taskConfigService;
   private final ObjectMapper objectMapper;
   private final Executor executor;
+  private final NotificationService notificationService;
 
   public ManualScrapingJobService(
       ManualScrapingJobMapper jobMapper,
       ManualScrapingService manualScrapingService,
       TaskConfigService taskConfigService,
       ObjectMapper objectMapper,
+      NotificationService notificationService,
       @Qualifier("manualScrapingExecutor") Executor executor) {
     this.jobMapper = jobMapper;
     this.manualScrapingService = manualScrapingService;
     this.taskConfigService = taskConfigService;
     this.objectMapper = objectMapper;
+    this.notificationService = notificationService;
     this.executor = executor;
   }
 
@@ -174,6 +180,8 @@ public class ManualScrapingJobService {
           .setUploadedFiles(writeFiles(result.getUploadedFiles()))
           .setCompletedAt(LocalDateTime.now());
       jobMapper.updateCheckpoint(completed);
+      notifyManualSafely(
+          completed, NotificationEvent.Status.SUCCESS, result.getUploadedFiles(), null, null);
       log.info("手动刮削作业完成 - 作业ID: {}, 任务ID: {}", jobId, job.getTaskId());
     } catch (Exception e) {
       fail(jobId, rootMessage(e), e);
@@ -215,7 +223,76 @@ public class ManualScrapingJobService {
         .setErrorMessage(message)
         .setCompletedAt(LocalDateTime.now());
     jobMapper.updateCheckpoint(job);
+    RenameOperationException renameError = findRenameError(error);
+    notifyManualSafely(
+        job,
+        NotificationEvent.Status.FAILURE,
+        List.of(),
+        message,
+        renameError == null ? null : renameError.getIssue());
     log.error("手动刮削作业失败 - 作业ID: {}, 阶段: {}", jobId, job.getStage(), error);
+  }
+
+  private void notifyManualSafely(
+      ManualScrapingJob job,
+      NotificationEvent.Status status,
+      List<String> uploadedFiles,
+      String errorMessage,
+      NotificationIssue issue) {
+    try {
+      notificationService.notifyAsync(manualEvent(job, status, uploadedFiles, errorMessage, issue));
+    } catch (Exception e) {
+      // 通知是附加能力，不得因配置、渲染或线程池异常改变刮削作业结果。
+      log.error("提交手动刮削通知失败 - 作业ID: {}", job.getId(), e);
+    }
+  }
+
+  private NotificationEvent manualEvent(
+      ManualScrapingJob job,
+      NotificationEvent.Status status,
+      List<String> uploadedFiles,
+      String errorMessage,
+      NotificationIssue issue) {
+    com.hienao.openlist2strm.entity.TaskConfig task = taskConfigService.getById(job.getTaskId());
+    LocalDateTime completedAt =
+        job.getCompletedAt() == null ? LocalDateTime.now() : job.getCompletedAt();
+    LocalDateTime startedAt = job.getStartedAt() == null ? job.getCreatedAt() : job.getStartedAt();
+    long durationMillis =
+        startedAt == null
+            ? 0
+            : Math.max(0, java.time.Duration.between(startedAt, completedAt).toMillis());
+    return NotificationEvent.builder()
+        .kind(NotificationEvent.Kind.MANUAL_SCRAPING)
+        .status(status)
+        .taskId(job.getTaskId())
+        .taskName(task == null ? "未知任务" : task.getTaskName())
+        .jobId(job.getId())
+        .mediaType(job.getMediaType())
+        .tmdbId(job.getTmdbId())
+        .sourcePath(job.getDirectoryPath())
+        .finalPath(job.getFinalDirectoryPath())
+        .failedStage(job.getStage())
+        .errorMessage(errorMessage)
+        .retryable(status == NotificationEvent.Status.FAILURE)
+        .renamedDirectories(
+            job.getRenamedDirectoryCount() == null ? 0 : job.getRenamedDirectoryCount())
+        .renamedFiles(job.getRenamedFileCount() == null ? 0 : job.getRenamedFileCount())
+        .uploadedFiles(uploadedFiles)
+        .issues(issue == null ? List.of() : List.of(issue))
+        .durationMillis(durationMillis)
+        .completedAt(completedAt)
+        .build();
+  }
+
+  private RenameOperationException findRenameError(Throwable error) {
+    Throwable current = error;
+    while (current != null) {
+      if (current instanceof RenameOperationException renameOperationException) {
+        return renameOperationException;
+      }
+      current = current.getCause();
+    }
+    return null;
   }
 
   private ManualScrapingJob requireJob(Long taskId, Long jobId) {

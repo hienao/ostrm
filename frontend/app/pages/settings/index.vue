@@ -241,6 +241,78 @@
           </div>
         </div>
 
+        <!-- 通知配置 -->
+        <div class="card">
+          <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <svg class="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            任务通知
+          </h3>
+          <div class="space-y-5">
+            <label class="flex items-start gap-3 p-4 bg-violet-500/5 rounded-xl border border-violet-500/10 cursor-pointer">
+              <input id="notificationEnabled" v-model="notificationConfig.enabled" type="checkbox" class="h-5 w-5 rounded mt-0.5" />
+              <div>
+                <span class="text-sm font-medium text-white">启用 Apprise 通知</span>
+                <p class="text-xs text-white/40 mt-1">普通任务和手动刮削到达终态后发送通知，默认关闭</p>
+              </div>
+            </label>
+
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div class="sm:col-span-2">
+                <label for="appriseServerUrl" class="block text-sm text-white/70 mb-2">Apprise 服务地址</label>
+                <input id="appriseServerUrl" v-model="notificationConfig.serverUrl" type="url" class="input-field" placeholder="http://apprise:8000" />
+              </div>
+              <div>
+                <label for="appriseConfigKey" class="block text-sm text-white/70 mb-2">配置 Key</label>
+                <input id="appriseConfigKey" v-model="notificationConfig.configKey" type="text" class="input-field" placeholder="ostrm" />
+                <p class="mt-1 text-xs text-white/30">对应 Apprise API 中保存的配置标识</p>
+              </div>
+              <div>
+                <label for="appriseTags" class="block text-sm text-white/70 mb-2">通知标签</label>
+                <input id="appriseTags" v-model="notificationConfig.tags" type="text" class="input-field" placeholder="all" />
+                <p class="mt-1 text-xs text-white/30">由 Apprise 将标签路由到一个或多个下游渠道</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label class="flex items-center gap-2 p-3 bg-white/5 rounded-xl cursor-pointer">
+                <input v-model="notificationConfig.notifyOnSuccess" type="checkbox" class="h-4 w-4 rounded" />
+                <span class="text-sm text-white/70">成功通知</span>
+              </label>
+              <label class="flex items-center gap-2 p-3 bg-white/5 rounded-xl cursor-pointer">
+                <input v-model="notificationConfig.notifyOnPartialSuccess" type="checkbox" class="h-4 w-4 rounded" />
+                <span class="text-sm text-white/70">部分完成通知</span>
+              </label>
+              <label class="flex items-center gap-2 p-3 bg-white/5 rounded-xl cursor-pointer">
+                <input v-model="notificationConfig.notifyOnFailure" type="checkbox" class="h-4 w-4 rounded" />
+                <span class="text-sm text-white/70">失败通知</span>
+              </label>
+            </div>
+
+            <label class="flex items-start gap-3 p-4 bg-white/5 rounded-xl cursor-pointer">
+              <input v-model="notificationConfig.includeFullPath" type="checkbox" class="h-5 w-5 rounded mt-0.5" />
+              <div>
+                <span class="text-sm font-medium text-white">通知中显示完整路径</span>
+                <p class="text-xs text-white/40 mt-1">完整路径有助于定位失败文件，但通知发送到外部渠道时可能包含目录结构等隐私信息。关闭后仅展示目录名和文件名。</p>
+              </div>
+            </label>
+
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="w-44">
+                <label for="notificationMaxDetails" class="block text-sm text-white/70 mb-2">每类最多展示</label>
+                <input id="notificationMaxDetails" v-model.number="notificationConfig.maxDetailItems" type="number" min="1" max="20" class="input-field" />
+              </div>
+              <button type="button" @click="testNotification" class="btn-success" :disabled="testingNotification">
+                {{ testingNotification ? '发送中...' : '发送测试通知' }}
+              </button>
+              <span v-if="notificationTestResult" :class="notificationTestResult.success ? 'text-emerald-400' : 'text-red-400'" class="text-sm font-medium">
+                {{ notificationTestResult.message }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <!-- 日志配置 -->
         <div class="card">
           <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -355,6 +427,17 @@ const selectedExtensions = ref([])
 const tmdbConfig = ref({ apiKey: '', language: 'zh-CN', region: 'CN', proxyHost: '', proxyPort: '', baseUrl: 'https://api.themoviedb.org', imageBaseUrl: 'https://image.tmdb.org' })
 const scrapingConfig = ref({ enabled: true, keepSubtitleFiles: false, useExistingScrapingInfo: false })
 const aiConfig = ref({ enabled: false, baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-3.5-turbo', qpmLimit: 60 })
+const notificationConfig = ref({
+  enabled: false,
+  notifyOnSuccess: true,
+  notifyOnPartialSuccess: true,
+  notifyOnFailure: true,
+  includeFullPath: true,
+  maxDetailItems: 5,
+  serverUrl: 'http://apprise:8000',
+  configKey: 'ostrm',
+  tags: 'all'
+})
 const logConfig = ref({ retentionDays: 7, level: 'info', reportUsageData: true })
 const showApiKey = ref(false)
 const saving = ref(false)
@@ -362,6 +445,8 @@ const showSuccess = ref(false)
 const errorMessage = ref('')
 const testingAi = ref(false)
 const aiTestResult = ref(null)
+const testingNotification = ref(false)
+const notificationTestResult = ref(null)
 
 // TMDB 域名选项
 const tmdbApiDomainOptions = [
@@ -442,6 +527,7 @@ const loadCurrentSettings = async () => {
       }
       if (config.scraping) scrapingConfig.value = { ...scrapingConfig.value, ...config.scraping }
       if (config.ai) aiConfig.value = { ...aiConfig.value, ...config.ai }
+      if (config.notifications) notificationConfig.value = { ...notificationConfig.value, ...config.notifications }
       if (config.log) logConfig.value = { ...logConfig.value, ...config.log }
     } else selectedExtensions.value = ['.mp4', '.avi', '.rmvb', '.mkv', '.iso']
   } catch { selectedExtensions.value = ['.mp4', '.avi', '.rmvb', '.mkv', '.iso'] }
@@ -454,7 +540,7 @@ const saveSettings = async () => {
   try {
     const response = await authenticatedApiCall('/system/config', {
       method: 'POST',
-      body: { mediaExtensions: selectedExtensions.value, tmdb: tmdbConfig.value, scraping: scrapingConfig.value, ai: aiConfig.value, log: logConfig.value }
+      body: { mediaExtensions: selectedExtensions.value, tmdb: tmdbConfig.value, scraping: scrapingConfig.value, ai: aiConfig.value, notifications: notificationConfig.value, log: logConfig.value }
     })
     if (response?.code === 200) { showSuccess.value = true; setTimeout(() => showSuccess.value = false, 3000) }
     else { errorMessage.value = response?.message || '保存设置失败'; setTimeout(() => errorMessage.value = '', 3000) }
@@ -471,6 +557,29 @@ const testAiConfig = async () => {
     aiTestResult.value = response?.code === 200 ? { success: true, message: 'AI 配置测试成功' } : { success: false, message: response?.message || 'AI 配置测试失败' }
   } catch { aiTestResult.value = { success: false, message: '测试 AI 配置失败' } }
   finally { testingAi.value = false; setTimeout(() => aiTestResult.value = null, 3000) }
+}
+
+const testNotification = async () => {
+  if (!notificationConfig.value.serverUrl || !notificationConfig.value.configKey) {
+    notificationTestResult.value = { success: false, message: '请填写 Apprise 服务地址和配置 Key' }
+    return
+  }
+  testingNotification.value = true
+  notificationTestResult.value = null
+  try {
+    const response = await authenticatedApiCall('/system/test-notification', {
+      method: 'POST',
+      body: { notifications: notificationConfig.value }
+    })
+    notificationTestResult.value = response?.code === 200
+      ? { success: true, message: '测试通知发送成功' }
+      : { success: false, message: response?.message || '测试通知发送失败' }
+  } catch {
+    notificationTestResult.value = { success: false, message: '测试通知发送失败' }
+  } finally {
+    testingNotification.value = false
+    setTimeout(() => notificationTestResult.value = null, 5000)
+  }
 }
 
 const toggleApiKeyVisibility = () => showApiKey.value = !showApiKey.value

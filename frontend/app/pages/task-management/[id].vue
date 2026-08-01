@@ -160,6 +160,10 @@
                 需要刮削
               </label>
               <label class="flex items-center text-sm text-white/60">
+                <input type="checkbox" :checked="task.autoRenameMedia" disabled class="mr-2 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500">
+                自动重命名媒体
+              </label>
+              <label class="flex items-center text-sm text-white/60">
                 <input type="checkbox" :checked="task.isIncrement" disabled class="mr-2 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500">
                 增量更新
               </label>
@@ -170,7 +174,7 @@
             </div>
 
             <div class="mt-3" v-if="task.renameRegex">
-              <dt class="text-sm text-white/40">重命名正则表达式</dt>
+              <dt class="text-sm text-white/40">STRM 文件名正则表达式</dt>
               <dd class="mt-1 text-sm text-white/80 font-mono bg-white/5 px-3 py-2 rounded break-all">{{ task.renameRegex }}</dd>
             </div>
 
@@ -259,7 +263,7 @@
 
               <div>
                 <div class="flex items-center justify-between mb-2">
-                  <label class="block text-sm text-white/70">重命名正则表达式</label>
+                  <label class="block text-sm text-white/70">STRM 文件名正则表达式</label>
                   <button type="button" @click="showRenameRegexHelp = !showRenameRegexHelp" class="text-white/40 hover:text-blue-400 transition-colors">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -267,7 +271,7 @@
                   </button>
                 </div>
                 <input v-model="taskForm.renameRegex" type="text" placeholder="留空表示不需要重命名" class="input-field">
-                <p class="mt-1 text-xs text-white/30">用于文件重命名的正则表达式</p>
+                <p class="mt-1 text-xs text-white/30">仅修改本地生成的 STRM 文件名，不修改 OpenList 源文件</p>
 
                 <div v-if="showRenameRegexHelp" class="mt-3 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
                   <h4 class="text-sm font-medium text-blue-400 mb-2">使用说明</h4>
@@ -289,6 +293,24 @@
                   <span class="ml-2 text-sm text-white/70">
                     需要刮削
                     <span class="block text-xs text-white/40 mt-0.5">启用TMDB刮削功能，生成NFO和封面</span>
+                  </span>
+                </label>
+
+                <label
+                  class="flex items-start"
+                  :class="!taskForm.needScrap || taskForm.libraryType === 'auto' || !taskForm.libraryType ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
+                >
+                  <input
+                    v-model="taskForm.autoRenameMedia"
+                    type="checkbox"
+                    :disabled="!taskForm.needScrap || taskForm.libraryType === 'auto' || !taskForm.libraryType"
+                    class="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-blue-500"
+                  >
+                  <span class="ml-2 text-sm text-white/70">
+                    普通任务自动重命名媒体
+                    <span class="block text-xs text-white/40 mt-0.5">
+                      执行任务时根据 TMDB 结果重命名 OpenList 媒体目录和文件，默认关闭；需要 OpenList 写入权限
+                    </span>
                   </span>
                 </label>
 
@@ -580,6 +602,7 @@ const taskForm = ref({
   strmPath: '/app/backend/strm',
   cron: '',
   needScrap: false,
+  autoRenameMedia: false,
   skipInvalidStructure: false,
   renameRegex: '',
   isIncrement: true,
@@ -587,6 +610,15 @@ const taskForm = ref({
 })
 const strmSubPath = ref('')
 const showRenameRegexHelp = ref(false)
+
+watch(
+  [() => taskForm.value.needScrap, () => taskForm.value.libraryType],
+  ([needScrap, libraryType]) => {
+    if (!needScrap || !libraryType || libraryType === 'auto') {
+      taskForm.value.autoRenameMedia = false
+    }
+  }
+)
 
 const getConfigInfo = async () => {
   try {
@@ -620,7 +652,7 @@ const fetchTasks = async () => {
 const resetTaskForm = () => {
   taskForm.value = {
     taskName: '', path: '', strmPath: '/app/backend/strm', cron: '',
-    libraryType: '', needScrap: false, skipInvalidStructure: false,
+    libraryType: '', needScrap: false, autoRenameMedia: false, skipInvalidStructure: false,
     renameRegex: '', isIncrement: true, isActive: true
   }
   strmSubPath.value = ''
@@ -632,6 +664,7 @@ const editTask = (task) => {
   taskForm.value = {
     taskName: task.taskName, path: task.path, strmPath: task.strmPath,
     libraryType: task.libraryType || 'auto', cron: task.cron || '', needScrap: task.needScrap || false,
+    autoRenameMedia: task.autoRenameMedia || false,
     skipInvalidStructure: task.libraryType && task.libraryType !== 'auto' ? task.skipInvalidStructure || false : false,
     renameRegex: task.renameRegex || '', isIncrement: task.isIncrement, isActive: task.isActive
   }
@@ -664,6 +697,9 @@ const submitTask = async () => {
     const fullStrmPath = '/app/backend/strm/' + (strmSubPath.value || '')
     const taskData = {
       ...taskForm.value,
+      autoRenameMedia: taskForm.value.needScrap && taskForm.value.libraryType !== 'auto'
+        ? taskForm.value.autoRenameMedia
+        : false,
       skipInvalidStructure: taskForm.value.libraryType === 'auto' ? false : taskForm.value.skipInvalidStructure,
       strmPath: fullStrmPath,
       openlistConfigId: parseInt(configId)

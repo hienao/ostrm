@@ -40,6 +40,9 @@ public class TaskConfig {
   /** 重命名正则表达式，为空时表示不需要重命名 */
   private String renameRegex;
 
+  /** 普通任务执行时是否根据刮削结果自动重命名 OpenList 媒体 */
+  private Boolean autoRenameMedia;
+
   /** 定时任务表达式 */
   private String cron;
 

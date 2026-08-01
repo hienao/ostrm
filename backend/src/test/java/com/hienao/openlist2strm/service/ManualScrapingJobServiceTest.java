@@ -3,6 +3,7 @@ package com.hienao.openlist2strm.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -10,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteRequest;
+import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.ExecuteResult;
 import com.hienao.openlist2strm.dto.task.ManualScrapingDtos.JobView;
 import com.hienao.openlist2strm.entity.ManualScrapingJob;
 import com.hienao.openlist2strm.entity.ManualScrapingJobStage;
@@ -18,27 +20,33 @@ import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.exception.BusinessException;
 import com.hienao.openlist2strm.mapper.ManualScrapingJobMapper;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class ManualScrapingJobServiceTest {
 
   private ManualScrapingJobMapper jobMapper;
+  private ManualScrapingService manualScrapingService;
   private TaskConfigService taskConfigService;
+  private NotificationService notificationService;
   private Executor executor;
   private ManualScrapingJobService service;
 
   @BeforeEach
   void setUp() {
     jobMapper = mock(ManualScrapingJobMapper.class);
+    manualScrapingService = mock(ManualScrapingService.class);
     taskConfigService = mock(TaskConfigService.class);
+    notificationService = mock(NotificationService.class);
     executor = mock(Executor.class);
     service =
         new ManualScrapingJobService(
             jobMapper,
-            mock(ManualScrapingService.class),
+            manualScrapingService,
             taskConfigService,
             new ObjectMapper(),
+            notificationService,
             executor);
   }
 
@@ -100,6 +108,46 @@ class ManualScrapingJobServiceTest {
     assertEquals("UPLOADING", result.getStage());
     assertEquals("/movies/Film (2026) {tmdbid-123}", result.getFinalDirectoryPath());
     verify(executor).execute(any());
+  }
+
+  @Test
+  void notificationSubmissionFailureDoesNotChangeSuccessfulJobResult() {
+    AtomicReference<ManualScrapingJob> persisted = new AtomicReference<>();
+    when(taskConfigService.getById(7L)).thenReturn(new TaskConfig().setId(7L).setTaskName("电影任务"));
+    when(jobMapper.insert(any()))
+        .thenAnswer(
+            invocation -> {
+              ManualScrapingJob inserted = invocation.getArgument(0);
+              inserted.setId(24L);
+              persisted.set(inserted);
+              return 1;
+            });
+    when(jobMapper.markRunningIfPending(24L)).thenReturn(1);
+    when(jobMapper.selectById(24L)).thenAnswer(invocation -> persisted.get());
+    when(manualScrapingService.executeJob(any(), any()))
+        .thenReturn(
+            ExecuteResult.builder()
+                .finalDirectoryPath("/movies/Film (2026) {tmdbid-123}")
+                .renamedDirectoryCount(1)
+                .renamedFileCount(1)
+                .uploadedFiles(java.util.List.of("movie.nfo"))
+                .message("手动刮削完成")
+                .build());
+    doThrow(new RuntimeException("通知队列不可用")).when(notificationService).notifyAsync(any());
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              Runnable command = invocation.getArgument(0);
+              command.run();
+              return null;
+            })
+        .when(executor)
+        .execute(any());
+
+    JobView result = service.submit(7L, request());
+
+    assertEquals("SUCCEEDED", result.getStatus());
+    assertEquals(100, result.getProgress());
+    assertEquals("/movies/Film (2026) {tmdbid-123}", result.getFinalDirectoryPath());
   }
 
   private ExecuteRequest request() {

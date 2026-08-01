@@ -87,7 +87,13 @@ public class SystemConfigService {
             logConfigValues(result);
 
             for (String requiredKey :
-                List.of("mediaExtensions", "tmdb", "scraping", "scrapingRegex", "log")) {
+                List.of(
+                    "mediaExtensions",
+                    "tmdb",
+                    "scraping",
+                    "scrapingRegex",
+                    "notifications",
+                    "log")) {
               if (!config.containsKey(requiredKey)) {
                 log.info("系统配置中缺少{}字段，添加默认配置", requiredKey);
                 needSave = true;
@@ -290,6 +296,19 @@ public class SystemConfigService {
     scrapConfig.put("useExistingScrapingInfo", false); // 是否优先使用已存在的刮削信息
     defaultConfig.put("scraping", scrapConfig);
 
+    // 通知配置，默认关闭；Apprise 中维护具体下游渠道和敏感通知 URL
+    Map<String, Object> notificationConfig = new HashMap<>();
+    notificationConfig.put("enabled", false);
+    notificationConfig.put("notifyOnSuccess", true);
+    notificationConfig.put("notifyOnPartialSuccess", true);
+    notificationConfig.put("notifyOnFailure", true);
+    notificationConfig.put("includeFullPath", true);
+    notificationConfig.put("maxDetailItems", 5);
+    notificationConfig.put("serverUrl", "http://apprise:8000");
+    notificationConfig.put("configKey", "ostrm");
+    notificationConfig.put("tags", "all");
+    defaultConfig.put("notifications", notificationConfig);
+
     // AI 识别配置
     Map<String, Object> aiConfig = new HashMap<>();
     aiConfig.put("enabled", false); // 是否启用AI识别功能
@@ -375,6 +394,13 @@ public class SystemConfigService {
   public Map<String, Object> getLogConfig() {
     Map<String, Object> systemConfig = getSystemConfig();
     return (Map<String, Object>) systemConfig.getOrDefault("log", new HashMap<>());
+  }
+
+  /** 获取通知配置。 */
+  @SuppressWarnings("unchecked")
+  public Map<String, Object> getNotificationConfig() {
+    Map<String, Object> systemConfig = getSystemConfig();
+    return (Map<String, Object>) systemConfig.getOrDefault("notifications", Collections.emptyMap());
   }
 
   /**

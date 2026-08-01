@@ -3,7 +3,6 @@ package com.hienao.openlist2strm.job;
 import com.hienao.openlist2strm.entity.TaskConfig;
 import com.hienao.openlist2strm.service.TaskConfigService;
 import com.hienao.openlist2strm.service.TaskExecutionService;
-import java.time.LocalDateTime;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.quartz.Job;
@@ -47,12 +46,8 @@ public class TaskConfigJob implements Job {
       }
 
       // 执行任务
-      taskExecutionService.executeTask(taskConfig.getId(), taskConfig.getIsIncrement());
-
-      // 更新最后执行时间
-      taskConfigService.updateLastExecTime(taskConfigId, LocalDateTime.now());
-
-      log.info("定时任务执行完成，任务名称: {}", taskConfig.getTaskName());
+      taskExecutionService.submitScheduledTask(taskConfig.getId(), taskConfig.getIsIncrement());
+      log.info("定时任务已提交，任务名称: {}", taskConfig.getTaskName());
 
     } catch (Exception e) {
       log.error("定时任务执行失败，任务配置ID: {}, 错误信息: {}", taskConfigId, e.getMessage(), e);
