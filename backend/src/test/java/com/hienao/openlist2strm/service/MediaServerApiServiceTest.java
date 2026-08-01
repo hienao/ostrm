@@ -1,6 +1,8 @@
 package com.hienao.openlist2strm.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -12,6 +14,7 @@ import com.hienao.openlist2strm.entity.MediaRefreshScope;
 import com.hienao.openlist2strm.entity.MediaServerConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -27,6 +30,20 @@ class MediaServerApiServiceTest {
     RestTemplate restTemplate = new RestTemplate();
     server = MockRestServiceServer.bindTo(restTemplate).build();
     service = new MediaServerApiService(null, new ObjectMapper(), restTemplate);
+  }
+
+  @Test
+  void springCanCreateServiceWhenTestConstructorAlsoExists() {
+    try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+      context.registerBean(
+          MediaServerConfigService.class, () -> mock(MediaServerConfigService.class));
+      context.registerBean(ObjectMapper.class, () -> new ObjectMapper());
+      context.register(MediaServerApiService.class);
+
+      context.refresh();
+
+      assertNotNull(context.getBean(MediaServerApiService.class));
+    }
   }
 
   @Test
