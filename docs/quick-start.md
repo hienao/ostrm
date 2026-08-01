@@ -187,6 +187,8 @@ docker-compose up -d
 
 - 📖 [添加更多 OpenList 配置](./add-openlist.md)
 - 📋 [创建更多转换任务](./add-task.md)
+- 🔄 [配置 Emby / Jellyfin 媒体库刷新](./media-server-refresh.md)
+- 🔔 [配置 Apprise 任务通知](./notifications.md)
 - ⚙️ [配置系统设置](./system-config.md)
 - 📊 [查看执行日志](./log.md)
 - ❓ [查看常见问题](./faq.md)

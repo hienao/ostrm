@@ -16,6 +16,8 @@ export default defineConfig({
           { text: '添加OpenList', link: '/add-openlist' },
           { text: '添加任务', link: '/add-task' },
           { text: '目录检查与手动刮削', link: '/media-maintenance' },
+          { text: 'Emby / Jellyfin 刷新', link: '/media-server-refresh' },
+          { text: 'Apprise 任务通知', link: '/notifications' },
           { text: '系统设置', link: '/system-config' }
         ] },
       { text: '特殊配置项说明', items: [
@@ -35,6 +37,8 @@ export default defineConfig({
           { text: '添加OpenList', link: '/add-openlist' },
           { text: '添加任务', link: '/add-task' },
           { text: '目录检查与手动刮削', link: '/media-maintenance' },
+          { text: 'Emby / Jellyfin 刷新', link: '/media-server-refresh' },
+          { text: 'Apprise 任务通知', link: '/notifications' },
           { text: '系统设置', link: '/system-config' }
         ] },
       { text: '特殊配置项说明', items: [
