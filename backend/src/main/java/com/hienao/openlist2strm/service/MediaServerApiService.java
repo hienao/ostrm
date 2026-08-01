@@ -11,6 +11,7 @@ import com.hienao.openlist2strm.exception.BusinessException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -30,6 +31,7 @@ public class MediaServerApiService {
   private final ObjectMapper objectMapper;
   private final RestTemplate restTemplate;
 
+  @Autowired
   public MediaServerApiService(MediaServerConfigService configService, ObjectMapper objectMapper) {
     this(configService, objectMapper, createRestTemplate());
   }
