@@ -36,23 +36,9 @@ OStrm 是一个面向 OpenList 影音库的自托管 Web 应用。它扫描远�
 
 ## 实际界面
 
-<p align="center">
-  <img src="./screenshots/task_manage.jpg" width="100%" alt="OStrm 任务管理界面，展示 OpenList 配置、定时任务和 STRM 输出路径">
-</p>
-
-<details>
-<summary><strong>查看更多界面</strong></summary>
-<br>
-
-| OpenList 配置 | 创建转换任务 |
+| OpenList 配置管理 | 编辑 OpenList 配置 |
 | --- | --- |
-| <img src="./screenshots/home.jpg" alt="OpenList 配置管理界面"> | <img src="./screenshots/add_task.jpg" alt="创建 STRM 转换任务界面"> |
-
-| 添加 OpenList | 运行日志 |
-| --- | --- |
-| <img src="./screenshots/add_openlist.jpg" alt="添加 OpenList 配置界面"> | <img src="./screenshots/logs.jpg" alt="任务运行日志界面"> |
-
-</details>
+| <img src="./docs/public/images/openlist-config-management.jpg" alt="OStrm OpenList 配置管理界面"> | <img src="./docs/public/images/openlist-config-form.jpg" alt="OStrm OpenList 配置完整表单"> |
 
 ## 工作方式
 
