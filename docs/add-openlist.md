@@ -19,7 +19,13 @@ OpenList 配置包含了连接到您的 OpenList 服务器所需的所有信息�
 1. 登录 OpenList to Stream 系统
 2. 在首页点击 **"添加配置"** 按钮
 
+![OpenList 配置管理页面，展示配置卡片以及编辑、停用、删除和管理任务入口](/images/openlist-config-management.jpg)
+
 ### 第二步：填写配置信息
+
+添加和编辑 OpenList 配置使用同一套完整表单；编辑时会自动填入当前配置。
+
+![OpenList 配置完整表单，包含 Base URL、Token、STRM Base URL、文件 API 限流和 URL 编码设置](/images/openlist-config-form.jpg)
 
 #### Base URL
 填写您的 OpenList 服务器地址：
