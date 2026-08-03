@@ -245,10 +245,13 @@
                   <option value="movie">电影</option>
                   <option value="tv">电视剧</option>
                   <option value="anime">动画（按电视剧刮削）</option>
-                  <option value="auto">自动识别（兼容旧任务）</option>
+                  <option value="auto">自动识别（不建议使用，仅兼容旧任务）</option>
                 </select>
                 <p class="mt-1 text-xs text-white/30">
                   系统会按所选类型解释目录层级，并约束 TMDB 和 AI 的媒体类型
+                </p>
+                <p v-if="taskForm.libraryType === 'auto'" class="mt-2 text-xs text-amber-300/80">
+                  不建议使用自动识别；该类型仅用于兼容旧任务，新任务请选择电影、电视剧或动画。
                 </p>
               </div>
 
